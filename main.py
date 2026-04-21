@@ -1,87 +1,116 @@
-import time
-import requests
+ import requests
 import os
+import time
+
+# =========================
+# CONFIG
+# =========================
+CITY = "Vienna"
+URL = "https://api.openweathermap.org/data/2.5/weather"
 
 API_KEY = os.getenv("WEATHER_API_KEY")
-CITY = "Vienna"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-print("🌦️ Smart Weather Bot läuft!")
-
-# -----------------------------
-# WEATHER FUNCTION
-# -----------------------------
-def get_weather():
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={API_KEY}&units=metric"
-    response = requests.get(url)
-    data = response.json()
-
-    print("API Response:", data)
-
-    if "main" not in data:
-        raise Exception(data)
-
-    temp = data["main"]["temp"]
-    weather = data["weather"][0]["main"]
-
-    return temp, weather
-
-# -----------------------------
-# DECISION ENGINE
-# -----------------------------
-def decision_engine(temp, weather):
-    if "Rain" in weather:
-        return "RAIN_ALERT"
-    elif temp > 28:
-        return "HEAT_ALERT"
-    elif temp < 5:
-        return "COLD_ALERT"
-    else:
-        return "NORMAL"
-
-# -----------------------------
+# =========================
 # TELEGRAM FUNCTION
-# -----------------------------
+# =========================
 def send_telegram(message):
-    token = os.getenv("TELEGRAM_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-
-    if not token or not chat_id:
-        print("❌ Telegram nicht konfiguriert")
-        return
-
     try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        response = requests.post(url, json={
-            "chat_id": chat_id,
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+        response = requests.post(url, data={
+            "chat_id": TELEGRAM_CHAT_ID,
             "text": message
         })
 
-        print("📩 Telegram gesendet:", response.text)
+        print("📤 Telegram gesendet:", message)
 
     except Exception as e:
         print("❌ Telegram Fehler:", e)
 
-# -----------------------------
+# =========================
+# WEATHER FUNCTION
+# =========================
+def get_weather():
+    try:
+        params = {
+            "q": CITY,
+            "appid": API_KEY,
+            "units": "metric"
+        }
+
+        response = requests.get(URL, params=params)
+        data = response.json()
+
+        print("🌐 API Response:", data)
+
+        temp = data["main"]["temp"]
+        weather = data["weather"][0]["main"]
+
+        return temp, weather
+
+    except Exception as e:
+        print("❌ Wetter Fehler:", e)
+        return None, None
+
+# =========================
+# DECISION ENGINE
+# =========================
+def decide_action(temp, weather):
+
+    if weather.lower() == "rain":
+        return "RAIN"
+
+    elif temp < 5:
+        return "COLD"
+
+    elif temp > 30:
+        return "HOT"
+
+    else:
+        return "NORMAL"
+
+# =========================
 # MAIN LOOP
-# -----------------------------
+# =========================
+print("🚀 Smart Weather Bot gestartet!")
+
 while True:
     try:
         temp, weather = get_weather()
-        action = decision_engine(temp, weather)
 
-        print(f"🌡️ {CITY}: {temp}°C | {weather} → {action}")
+        if temp is None:
+            time.sleep(10)
+            continue
 
-        # 🔥 ACTION TRIGGERS
-        if action == "RAIN_ALERT":
-            send_telegram("🌧️ Es regnet! Perfekt für Indoor-Produkte ☕📚")
+        action = decide_action(temp, weather)
 
-        elif action == "HEAT_ALERT":
-            send_telegram("🔥 Heiß! Sommer-Produkte verkaufen 🧃")
+        print(f"📊 {CITY}: {temp}°C | {weather} → {action}")
 
-        elif action == "COLD_ALERT":
-            send_telegram("❄️ Kalt! Winter-Produkte 🧥")
+        # =========================
+        # ACTIONS
+        # =========================
+        if action == "RAIN":
+            send_telegram("🌧️ Regen! Perfekt für Indoor-Produkte 🛋️")
+
+        elif action == "COLD":
+            send_telegram("🥶 Kalt! Zeit für warme Kleidung 🧥")
+
+        elif action == "HOT":
+            send_telegram("🔥 Heiß! Sommer-Produkte verkaufen ☀️")
+
+        elif action == "NORMAL":
+            print("☁️ Kein Alert nötig")
+
+        # =========================
+        # TEST (WICHTIG!)
+        # =========================
+        send_telegram("🔥 TEST läuft – Bot aktiv!")
+
+        # Warte 60 Sekunden
+        time.sleep(60)
 
     except Exception as e:
-        print("❌ Fehler:", e)
-
-    time.sleep(30)
+        print("❌ Fehler im Loop:", e)
+        time.sleep(10)

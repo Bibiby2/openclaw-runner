@@ -41,3 +41,20 @@ while True:
         print("❌ Fehler:", e)
 
     time.sleep(30)
+def send_telegram(message):
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, json={
+        "chat_id": chat_id,
+        "text": message
+    })
+    if action == "RAIN_ALERT":
+    send_telegram("🌧️ Es regnet! Perfekt für Indoor-Produkte ☕📚")
+
+elif action == "HEAT_ALERT":
+    send_telegram("🔥 Heiß heute! Promote Getränke / Sommerprodukte 🧃")
+
+elif action == "COLD_ALERT":
+    send_telegram("❄️ Kalt! Winter-Produkte pushen 🧥")

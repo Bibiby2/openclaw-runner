@@ -12,6 +12,12 @@ def get_weather():
     response = requests.get(url)
     data = response.json()
 
+    # DEBUG: zeigt komplette API Antwort
+    print("API Response:", data)
+
+    if "main" not in data:
+        raise Exception(data)
+
     temp = data["main"]["temp"]
     weather = data["weather"][0]["main"]
 
@@ -23,9 +29,9 @@ while True:
         print(f"🌡️ {CITY}: {temp}°C | {weather}")
 
         if temp > 25:
-            print("🔥 Warm → Sommer Modus")
+            print("🔥 Warm")
         elif temp < 10:
-            print("❄️ Kalt → Winter Modus")
+            print("❄️ Kalt")
         else:
             print("🌤️ Normal")
 

@@ -5,15 +5,12 @@ import os
 API_KEY = os.getenv("WEATHER_API_KEY")
 CITY = "Vienna"
 
-print("🌦️ Weather Bot läuft!")
+print("🌦️ Smart Weather Bot läuft!")
 
 def get_weather():
     url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={API_KEY}&units=metric"
     response = requests.get(url)
     data = response.json()
-
-    # DEBUG: zeigt komplette API Antwort
-    print("API Response:", data)
 
     if "main" not in data:
         raise Exception(data)
@@ -23,17 +20,22 @@ def get_weather():
 
     return temp, weather
 
+def decision_engine(temp, weather):
+    if "Rain" in weather:
+        return "RAIN_ALERT"
+    elif temp > 28:
+        return "HEAT_ALERT"
+    elif temp < 5:
+        return "COLD_ALERT"
+    else:
+        return "NORMAL"
+
 while True:
     try:
         temp, weather = get_weather()
-        print(f"🌡️ {CITY}: {temp}°C | {weather}")
+        action = decision_engine(temp, weather)
 
-        if temp > 25:
-            print("🔥 Warm")
-        elif temp < 10:
-            print("❄️ Kalt")
-        else:
-            print("🌤️ Normal")
+        print(f"🌡️ {CITY}: {temp}°C | {weather} → {action}")
 
     except Exception as e:
         print("❌ Fehler:", e)

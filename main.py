@@ -2,75 +2,98 @@ import requests
 import time
 import os
 
-# ENV VARS
+# =========================
+# ENV VARS (Railway)
+# =========================
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Städte + Beispiel Market Preise (manuell ersetzt du später)
-markets = [
-    {"city": "New York", "lat": 40.7128, "lon": -74.0060, "yes_price": 0.65, "type": "low_rain"},
-    {"city": "London", "lat": 51.5072, "lon": -0.1276, "yes_price": 0.90, "type": "low_rain"},
-    {"city": "Hong Kong", "lat": 22.3193, "lon": 114.1694, "yes_price": 0.30, "type": "low_rain"}
-]
+# =========================
+# WEATHER FUNCTION
+# =========================
+def get_weather(city="Vienna"):
+    try:
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
+        response = requests.get(url)
+        data = response.json()
 
-def get_weather(lat, lon):
-    url = f"https://api.openweathermap.org/data/2.5/onecall?lat={lat}&lon={lon}&exclude=minutely,hourly&appid={WEATHER_API_KEY}&units=metric"
-    response = requests.get(url)
-    return response.json()
+        temp = data["main"]["temp"]
+        description = data["weather"][0]["description"]
 
-def estimate_rain(data):
-    # einfacher Proxy: Regen heute + morgen
-    rain = 0
-    daily = data.get("daily", [])
-    for day in daily[:2]:
-        rain += day.get("rain", 0)
-    return rain
+        return f"{city}: {temp}°C | {description}"
 
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg
-    }
-    requests.post(url, json=payload)
+    except Exception as e:
+        return f"❌ Weather Error: {e}"
 
-def analyze_market(city, rain, yes_price):
-    # einfache Edge Logik
-    if rain > 5 and yes_price > 0.6:
-        return "🔥 BUY NO", "High"
-    elif rain < 2 and yes_price < 0.5:
-        return "🔥 BUY YES", "Medium"
-    else:
-        return "⚠️ SKIP", "Low"
+# =========================
+# TELEGRAM FUNCTION
+# =========================
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message
+        }
 
-def run_bot():
-    print("🚀 Phase 2 Bot läuft...")
+        requests.post(url, data=payload)
+        print("📩 Telegram gesendet:", message)
 
-    for m in markets:
-        try:
-            data = get_weather(m["lat"], m["lon"])
-            rain = estimate_rain(data)
+    except Exception as e:
+        print("❌ Telegram Fehler:", e)
 
-            decision, strength = analyze_market(m["city"], rain, m["yes_price"])
+# =========================
+# POLYMARKET FUNCTION
+# =========================
+def get_polymarket_data():
+    try:
+        url = "https://gamma-api.polymarket.com/markets"
+        response = requests.get(url)
+        data = response.json()
 
-            msg = f"""
-📊 MARKET ANALYSIS
+        messages = []
 
-City: {m['city']}
-Rain Estimate: {rain} mm
-Market YES Price: {m['yes_price']}
+        # wir nehmen die ersten 5 Märkte
+        for market in data[:5]:
+            question = market.get("question", "N/A")
+            price = market.get("lastTradePrice", "N/A")
 
-Decision: {decision}
-Confidence: {strength}
-"""
-
+            msg = f"📊 {question}\n💰 Price: {price}"
             print(msg)
-            send_telegram(msg)
+            messages.append(msg)
 
-        except Exception as e:
-            print(f"❌ Fehler bei {m['city']}: {e}")
+        return messages
 
-while True:
-    run_bot()
-    time.sleep(600)  # alle 10 Minuten
+    except Exception as e:
+        error_msg = f"❌ Polymarket Error: {e}"
+        print(error_msg)
+        return [error_msg]
+
+# =========================
+# MAIN LOOP
+# =========================
+def main():
+    print("🚀 Bot gestartet...")
+
+    while True:
+        print("\n--- Neue Runde ---")
+
+        # WEATHER
+        weather = get_weather("Vienna")
+        print(weather)
+        send_telegram(f"🌦 Weather Update:\n{weather}")
+
+        # POLYMARKET
+        markets = get_polymarket_data()
+        for m in markets:
+            send_telegram(m)
+
+        # WAIT (5 Minuten)
+        time.sleep(300)
+
+# =========================
+# START
+# =========================
+if __name__ == "__main__":
+    main()

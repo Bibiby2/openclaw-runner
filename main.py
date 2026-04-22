@@ -14,6 +14,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # =========================
 CITIES = ["Vienna", "London", "New York", "Hong Kong"]
 
+TEST_MODE = True  # 🔥 HIER STEUERST DU ALLES
+
 # =========================
 # WEATHER FUNCTION
 # =========================
@@ -22,13 +24,10 @@ def get_weather(city):
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
         data = requests.get(url).json()
 
-        temp = data["main"]["temp"]
-        description = data["weather"][0]["description"].lower()
-
         return {
             "city": city,
-            "temp": temp,
-            "description": description
+            "temp": data["main"]["temp"],
+            "description": data["weather"][0]["description"].lower()
         }
 
     except Exception as e:
@@ -36,7 +35,7 @@ def get_weather(city):
         return None
 
 # =========================
-# TELEGRAM FUNCTION
+# TELEGRAM
 # =========================
 def send_telegram(message):
     try:
@@ -50,32 +49,31 @@ def send_telegram(message):
         print("Telegram Error:", e)
 
 # =========================
-# POLYMARKET FUNCTION
+# POLYMARKET
 # =========================
 def get_polymarket_markets():
     try:
         url = "https://gamma-api.polymarket.com/markets"
-        data = requests.get(url).json()
-        return data
+        return requests.get(url).json()
     except Exception as e:
         print("Polymarket Error:", e)
         return []
 
 # =========================
-# DECISION ENGINE 🧠
+# DECISION ENGINE
 # =========================
-def analyze_and_signal(weather_data, markets):
+def analyze_and_signal(weather, markets):
     signals = []
 
-    city = weather_data["city"].lower()
-    temp = weather_data["temp"]
-    desc = weather_data["description"]
+    city = weather["city"].lower()
+    temp = weather["temp"]
+    desc = weather["description"]
 
-    for market in markets[:50]:  # mehr Märkte scannen
+    for market in markets[:50]:
         question = market.get("question", "").lower()
-        price = market.get("lastTradePrice", None)
+        price = market.get("lastTradePrice")
 
-        if price is None:
+        if not price:
             continue
 
         try:
@@ -83,42 +81,35 @@ def analyze_and_signal(weather_data, markets):
         except:
             continue
 
-        # =========================
-        # 🌧 REGEN / CLOUD STRATEGIE (lockerer)
-        # =========================
+        # 🌧 Regen / Clouds
         if city in question and ("rain" in question or "precipitation" in question):
             if "rain" in desc or "cloud" in desc:
                 if price < 0.7:
-                    signals.append(f"🌧 BUY YES → {question} (edge detected)")
-                elif price > 0.8:
-                    signals.append(f"⚠️ BUY NO → {question} (overpriced)")
+                    signals.append(f"🌧 BUY YES → {question}")
 
-        # =========================
-        # 🔥 HITZE STRATEGIE
-        # =========================
+        # 🔥 Temperatur
         if city in question and "temperature" in question:
             if temp > 22 and price < 0.75:
-                signals.append(f"🔥 BUY YES → {question} (warm edge)")
+                signals.append(f"🔥 BUY YES → {question}")
             elif temp < 8 and price > 0.65:
-                signals.append(f"❄️ BUY NO → {question} (cold edge)")
+                signals.append(f"❄️ BUY NO → {question}")
 
-        # =========================
-        # 🧪 FALLBACK (damit du sicher Signale siehst)
-        # =========================
-        if city in question and len(signals) == 0:
-            if price < 0.5:
-                signals.append(f"🧪 TEST EDGE → {question} (low price opportunity)")
+    # =========================
+    # 🧪 TEST MODE
+    # =========================
+    if TEST_MODE and len(signals) == 0:
+        signals.append(f"🧪 TEST SIGNAL → {weather['city']} funktioniert!")
 
     return signals
 
 # =========================
-# MAIN LOOP
+# MAIN
 # =========================
 def main():
-    print("🚀 Phase 3.2 Bot gestartet")
+    print("🚀 Bot läuft...")
 
     while True:
-        print("\n--- Neue Analyse ---")
+        print("\n--- Neue Runde ---")
 
         markets = get_polymarket_markets()
 
@@ -132,11 +123,8 @@ def main():
 
             signals = analyze_and_signal(weather, markets)
 
-            if signals:
-                for signal in signals:
-                    send_telegram(f"📊 SIGNAL ({city}):\n{signal}")
-            else:
-                print(f"No signals for {city}")
+            for signal in signals:
+                send_telegram(f"📊 SIGNAL ({city}):\n{signal}")
 
         time.sleep(300)
 

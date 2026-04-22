@@ -1,61 +1,76 @@
 import requests
-import os
 import time
+import os
 
-CITY = "Vienna"
-
-API_KEY = os.getenv("WEATHER_API_KEY")
+# ENV VARS
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Städte + Beispiel Market Preise (manuell ersetzt du später)
+markets = [
+    {"city": "New York", "lat": 40.7128, "lon": -74.0060, "yes_price": 0.65, "type": "low_rain"},
+    {"city": "London", "lat": 51.5072, "lon": -0.1276, "yes_price": 0.90, "type": "low_rain"},
+    {"city": "Hong Kong", "lat": 22.3193, "lon": 114.1694, "yes_price": 0.30, "type": "low_rain"}
+]
 
-def send_telegram(message):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+def get_weather(lat, lon):
+    url = f"https://api.openweathermap.org/data/2.5/onecall?lat={lat}&lon={lon}&exclude=minutely,hourly&appid={WEATHER_API_KEY}&units=metric"
+    response = requests.get(url)
+    return response.json()
 
-        requests.post(url, data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message
-        })
+def estimate_rain(data):
+    # einfacher Proxy: Regen heute + morgen
+    rain = 0
+    daily = data.get("daily", [])
+    for day in daily[:2]:
+        rain += day.get("rain", 0)
+    return rain
 
-        print("Telegram gesendet:", message)
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": msg
+    }
+    requests.post(url, json=payload)
 
-    except Exception as e:
-        print("Telegram Fehler:", e)
+def analyze_market(city, rain, yes_price):
+    # einfache Edge Logik
+    if rain > 5 and yes_price > 0.6:
+        return "🔥 BUY NO", "High"
+    elif rain < 2 and yes_price < 0.5:
+        return "🔥 BUY YES", "Medium"
+    else:
+        return "⚠️ SKIP", "Low"
 
+def run_bot():
+    print("🚀 Phase 2 Bot läuft...")
 
-def get_weather():
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={API_KEY}&units=metric"
-        response = requests.get(url)
-        data = response.json()
+    for m in markets:
+        try:
+            data = get_weather(m["lat"], m["lon"])
+            rain = estimate_rain(data)
 
-        temp = data["main"]["temp"]
-        weather = data["weather"][0]["main"]
+            decision, strength = analyze_market(m["city"], rain, m["yes_price"])
 
-        return temp, weather
+            msg = f"""
+📊 MARKET ANALYSIS
 
-    except Exception as e:
-        print("Wetterfehler:", e)
-        return None, None
+City: {m['city']}
+Rain Estimate: {rain} mm
+Market YES Price: {m['yes_price']}
 
+Decision: {decision}
+Confidence: {strength}
+"""
 
-print("Bot gestartet")
+            print(msg)
+            send_telegram(msg)
+
+        except Exception as e:
+            print(f"❌ Fehler bei {m['city']}: {e}")
 
 while True:
-    try:
-        temp, weather = get_weather()
-
-        if temp is None:
-            time.sleep(10)
-            continue
-
-        print(f"{CITY}: {temp}°C | {weather}")
-
-        send_telegram(f"{CITY}: {temp}°C | {weather}")
-
-        time.sleep(60)
-
-    except Exception as e:
-        print("Loop Fehler:", e)
-        time.sleep(10)
+    run_bot()
+    time.sleep(600)  # alle 10 Minuten

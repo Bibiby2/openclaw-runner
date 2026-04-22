@@ -23,7 +23,7 @@ def get_weather(city):
         data = requests.get(url).json()
 
         temp = data["main"]["temp"]
-        description = data["weather"][0]["description"]
+        description = data["weather"][0]["description"].lower()
 
         return {
             "city": city,
@@ -67,31 +67,47 @@ def get_polymarket_markets():
 def analyze_and_signal(weather_data, markets):
     signals = []
 
-    city = weather_data["city"]
+    city = weather_data["city"].lower()
     temp = weather_data["temp"]
+    desc = weather_data["description"]
 
-    for market in markets[:20]:  # nur erste 20 scannen
+    for market in markets[:50]:  # mehr Märkte scannen
         question = market.get("question", "").lower()
         price = market.get("lastTradePrice", None)
 
         if price is None:
             continue
 
-        # 🎯 RULE 1: Regen erkennen
-        if "rain" in question and city.lower() in question:
-            if "rain" in weather_data["description"]:
-                if float(price) < 0.6:
-                    signals.append(f"🌧 BUY YES → {question} (Market underpriced)")
-                else:
-                    signals.append(f"⚖️ HOLD → {question}")
+        try:
+            price = float(price)
+        except:
+            continue
 
-        # 🎯 RULE 2: Temperatur High
-        if "temperature" in question and city.lower() in question:
-            if temp > 25 and float(price) < 0.7:
-                signals.append(f"🔥 BUY YES → {question} (Hot weather edge)")
+        # =========================
+        # 🌧 REGEN / CLOUD STRATEGIE (lockerer)
+        # =========================
+        if city in question and ("rain" in question or "precipitation" in question):
+            if "rain" in desc or "cloud" in desc:
+                if price < 0.7:
+                    signals.append(f"🌧 BUY YES → {question} (edge detected)")
+                elif price > 0.8:
+                    signals.append(f"⚠️ BUY NO → {question} (overpriced)")
 
-            elif temp < 10 and float(price) > 0.6:
-                signals.append(f"❄️ BUY NO → {question} (Cold weather edge)")
+        # =========================
+        # 🔥 HITZE STRATEGIE
+        # =========================
+        if city in question and "temperature" in question:
+            if temp > 22 and price < 0.75:
+                signals.append(f"🔥 BUY YES → {question} (warm edge)")
+            elif temp < 8 and price > 0.65:
+                signals.append(f"❄️ BUY NO → {question} (cold edge)")
+
+        # =========================
+        # 🧪 FALLBACK (damit du sicher Signale siehst)
+        # =========================
+        if city in question and len(signals) == 0:
+            if price < 0.5:
+                signals.append(f"🧪 TEST EDGE → {question} (low price opportunity)")
 
     return signals
 

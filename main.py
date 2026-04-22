@@ -14,10 +14,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # =========================
 CITIES = ["Vienna", "London", "New York", "Hong Kong"]
 
-TEST_MODE = True  # 🔥 HIER STEUERST DU ALLES
+TEST_MODE = False  # ❗JETZT AUS
 
 # =========================
-# WEATHER FUNCTION
+# WEATHER
 # =========================
 def get_weather(city):
     try:
@@ -60,7 +60,7 @@ def get_polymarket_markets():
         return []
 
 # =========================
-# DECISION ENGINE
+# DECISION ENGINE 🧠 (REAL)
 # =========================
 def analyze_and_signal(weather, markets):
     signals = []
@@ -81,24 +81,26 @@ def analyze_and_signal(weather, markets):
         except:
             continue
 
-        # 🌧 Regen / Clouds
+        # 🌧 Regen Strategie
         if city in question and ("rain" in question or "precipitation" in question):
-            if "rain" in desc or "cloud" in desc:
-                if price < 0.7:
-                    signals.append(f"🌧 BUY YES → {question}")
+            if "rain" in desc:
+                if price < 0.65:
+                    signals.append(f"🌧 BUY YES → {question} (rain undervalued)")
+            else:
+                if price > 0.75:
+                    signals.append(f"☀️ BUY NO → {question} (no rain expected)")
 
-        # 🔥 Temperatur
+        # 🌥 Cloud → leichte Chance
+        if city in question and "rain" in question:
+            if "cloud" in desc and price < 0.55:
+                signals.append(f"🌥 EARLY BUY → {question} (cloud setup)")
+
+        # 🔥 Temperatur Strategie
         if city in question and "temperature" in question:
-            if temp > 22 and price < 0.75:
-                signals.append(f"🔥 BUY YES → {question}")
-            elif temp < 8 and price > 0.65:
-                signals.append(f"❄️ BUY NO → {question}")
-
-    # =========================
-    # 🧪 TEST MODE
-    # =========================
-    if TEST_MODE and len(signals) == 0:
-        signals.append(f"🧪 TEST SIGNAL → {weather['city']} funktioniert!")
+            if temp > 25 and price < 0.7:
+                signals.append(f"🔥 BUY YES → {question} (heat edge)")
+            elif temp < 10 and price > 0.65:
+                signals.append(f"❄️ BUY NO → {question} (cold edge)")
 
     return signals
 
@@ -106,10 +108,10 @@ def analyze_and_signal(weather, markets):
 # MAIN
 # =========================
 def main():
-    print("🚀 Bot läuft...")
+    print("🚀 REAL BOT läuft...")
 
     while True:
-        print("\n--- Neue Runde ---")
+        print("\n--- Analyse ---")
 
         markets = get_polymarket_markets()
 
@@ -123,8 +125,11 @@ def main():
 
             signals = analyze_and_signal(weather, markets)
 
-            for signal in signals:
-                send_telegram(f"📊 SIGNAL ({city}):\n{signal}")
+            if signals:
+                for signal in signals:
+                    send_telegram(f"📊 SIGNAL ({city}):\n{signal}")
+            else:
+                print(f"No signals for {city}")
 
         time.sleep(300)
 

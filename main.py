@@ -1,145 +1,123 @@
 import requests
-import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# =========================
+# CONFIG
+# =========================
+TELEGRAM_TOKEN = "DEIN_TOKEN"
+CHAT_ID = "DEINE_CHAT_ID"
 
 CITIES = ["Vienna", "London", "New York", "Hong Kong"]
 
-COOLDOWN_MINUTES = 60
-last_signal_time = {}
-
-POLYMARKET_LINKS = {
-    "London": "https://polymarket.com/event/precipitation-in-london-in-april",
-    "New York": "https://polymarket.com/event/precipitation-in-nyc-in-april",
-    "Hong Kong": "https://polymarket.com/event/precipitation-in-hong-kong-in-april"
-}
-
-# 👉 Simulierte Marktpreise (später echte API)
-MARKET_PROB = {
-    "London": 0.75,
-    "New York": 0.65,
-    "Hong Kong": 0.55
-}
-
+# =========================
+# TELEGRAM
+# =========================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg
-    })
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
+# =========================
+# WEATHER DATA
+# =========================
 def get_weather(city):
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
-    return requests.get(url).json()
+    url = f"https://wttr.in/{city}?format=j1"
+    data = requests.get(url).json()
 
-def calculate_probability(data):
-    wind = data["wind"]["speed"]
-    clouds = data["clouds"]["all"]
-    humidity = data["main"]["humidity"]
+    current = data["current_condition"][0]
 
+    temp = float(current["temp_C"])
+    wind = float(current["windspeedKmph"]) / 3.6
+    humidity = float(current["humidity"])
+    clouds = float(current["cloudcover"])
+
+    return temp, wind, humidity, clouds
+
+# =========================
+# MODEL (DEIN EDGE MODEL)
+# =========================
+def calculate_model_probability(temp, wind, humidity, clouds):
     score = 0
 
-    if wind >= 18:
-        score += 4
-    elif wind >= 14:
+    if wind > 10:
+        score += 3
+    if humidity > 70:
+        score += 3
+    if clouds > 60:
+        score += 2
+    if temp < 15:
         score += 2
 
-    if clouds >= 80:
-        score += 3
-    elif clouds >= 50:
-        score += 1
+    return min(score * 10, 100)  # max 100%
 
-    if humidity >= 80:
-        score += 3
-    elif humidity >= 60:
-        score += 1
+# =========================
+# MARKET (SIMULIERT – später ersetzen)
+# =========================
+def get_market_probability():
+    import random
+    return random.randint(40, 80)
 
-    # 👉 convert score → probability
-    prob = score / 10
-    return prob, score
+# =========================
+# VALUE FILTER
+# =========================
+def is_profitable(model, market):
+    edge = model - market
 
-def value_decision(city, model_prob):
-    market_prob = MARKET_PROB.get(city, 0.5)
+    if edge > 10 and model >= 60 and market < 90:
+        return True, edge
+    return False, edge
 
-    edge = model_prob - market_prob
-
-    if edge > 0.15:
-        return "BUY_YES", edge, market_prob
-    elif edge < -0.15:
-        return "BUY_NO", edge, market_prob
-    else:
-        return "SKIP", edge, market_prob
-
-def can_send(city):
-    now = datetime.utcnow()
-
-    if city not in last_signal_time:
-        last_signal_time[city] = now
-        return True
-
-    if now - last_signal_time[city] > timedelta(minutes=COOLDOWN_MINUTES):
-        last_signal_time[city] = now
-        return True
-
-    return False
-
-def run():
+# =========================
+# MAIN LOOP
+# =========================
+def run_bot():
     print("🚀 VALUE BOT läuft...")
-    send_telegram("💰 Value Trading Bot ONLINE")
 
     while True:
-        print("\n--- Analyse ---")
+        print("\n--- Neue Analyse Runde ---")
 
         for city in CITIES:
             try:
-                data = get_weather(city)
+                temp, wind, humidity, clouds = get_weather(city)
 
-                temp = data["main"]["temp"]
-                weather = data["weather"][0]["description"]
+                model = calculate_model_probability(temp, wind, humidity, clouds)
+                market = get_market_probability()
 
-                model_prob, score = calculate_probability(data)
-                action, edge, market_prob = value_decision(city, model_prob)
+                profitable, edge = is_profitable(model, market)
 
-                if action == "SKIP":
-                    print(f"❌ No Edge: {city}")
-                    continue
+                print(f"{city}: Model {model}% | Market {market}% | Edge {edge}%")
 
-                if can_send(city):
-
-                    link = POLYMARKET_LINKS.get(city, "https://polymarket.com")
-
-                    msg = f"""
-💰 VALUE TRADE 💰
+                if profitable:
+                    msg = f"""💰 VALUE TRADE 💰
 
 📍 {city}
-🌡 {temp}°C
-☁️ {weather}
+🌡️ {temp}°C
+🌬️ Wind: {round(wind,2)} m/s
+☁️ Clouds: {clouds}%
+💧 Humidity: {humidity}%
 
-🧠 Model: {round(model_prob*100)}%
-📊 Market: {round(market_prob*100)}%
-📈 Edge: {round(edge*100)}%
+🧠 Model: {model}%
+📊 Market: {market}%
+📈 Edge: +{edge}%
 
-🎯 ACTION: {action.replace("_", " ")}
+🎯 ACTION: BUY YES
 
-🔗 {link}
-
-💵 Einsatz: max $2
+💸 Einsatz: max $2
 """
 
                     send_telegram(msg)
-                    print(f"✅ VALUE TRADE: {city}")
 
                 else:
-                    print(f"— Cooldown: {city}")
+                    print(f"❌ Skip (kein Value): {city}")
 
             except Exception as e:
-                print("Fehler:", e)
+                print(f"Fehler bei {city}: {e}")
 
-        time.sleep(300)
+        time.sleep(300)  # alle 5 Minuten
 
+# =========================
+# START
+# =========================
 if __name__ == "__main__":
-    run()
+    send_telegram("✅ VALUE BOT ONLINE (Profit Mode aktiv)")
+    run_bot()

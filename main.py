@@ -17,7 +17,7 @@ CITIES = ["Vienna", "London", "New York", "Hong Kong"]
 
 HOT_THRESHOLD = 30
 COLD_THRESHOLD = 3
-WIND_THRESHOLD = 12
+WIND_THRESHOLD = 14   # 🔥 erhöht (war 12)
 
 COOLDOWN_MINUTES = 60
 last_signal_time = {}
@@ -51,7 +51,7 @@ def get_weather(city):
     return requests.get(url).json()
 
 # ==============================
-# SIGNAL LOGIK
+# SIGNAL LOGIK (VERBESSERT)
 # ==============================
 def get_signal(city, data):
     temp = data["main"]["temp"]
@@ -59,32 +59,45 @@ def get_signal(city, data):
     description = data["weather"][0]["description"].lower()
     wind = data["wind"]["speed"]
 
+    # 🌧 Starkregen (nur heavy!)
     if "rain" in weather_main or "thunderstorm" in weather_main:
         if "heavy" in description or "thunderstorm" in description:
             return "RAIN_STRONG", description
 
+    # 🔥 Extreme Hitze
     if temp >= HOT_THRESHOLD:
         return "EXTREME_HEAT", f"{temp}°C"
 
+    # ❄️ Extreme Kälte
     if temp <= COLD_THRESHOLD:
         return "EXTREME_COLD", f"{temp}°C"
 
+    # 🌪 NUR STARKER WIND (FILTER!)
     if wind >= WIND_THRESHOLD:
         return "HIGH_WIND", f"{wind} m/s"
 
     return None, None
 
 # ==============================
-# TRADE DECISION
+# TRADE DECISION (SMARTER)
 # ==============================
-def trade_decision(signal):
+def trade_decision(signal, reason):
     if signal == "RAIN_STRONG":
-        return "BUY YES 🌧", "Regen wahrscheinlich"
+        return "BUY YES 🌧", "Starker Regen wahrscheinlich"
+
     if signal == "EXTREME_HEAT":
-        return "BUY YES 🔥", "Hitze wahrscheinlich"
+        return "BUY YES 🔥", "Extreme Hitze wahrscheinlich"
+
     if signal == "HIGH_WIND":
-        return "BUY YES 🌪", "Wind Event aktiv"
-    return "NO TRADE", "Keine klare Edge"
+        wind_speed = float(reason.split()[0])
+
+        if wind_speed >= 18:
+            return "BUY YES 🌪", "Sehr starker Wind (High Confidence)"
+
+        if wind_speed >= 14:
+            return "BUY YES 🌪", "Starker Wind (Medium Confidence)"
+
+    return "NO TRADE", "Zu schwaches Signal"
 
 # ==============================
 # COOLDOWN
@@ -107,8 +120,8 @@ def can_send(city, signal):
 # MAIN LOOP
 # ==============================
 def run():
-    print("🚀 BOT mit Trading läuft...")
-    send_telegram("✅ Bot ONLINE (Trading Mode aktiv)")
+    print("🚀 SMART TRADING BOT läuft...")
+    send_telegram("✅ Bot ONLINE (Smart Trading aktiv)")
 
     while True:
         print("\n--- Analyse ---")
@@ -127,7 +140,13 @@ def run():
                 if signal:
                     if can_send(city, signal):
 
-                        action, explanation = trade_decision(signal)
+                        action, explanation = trade_decision(signal, reason)
+
+                        # ❌ Skip schlechte Trades
+                        if action == "NO TRADE":
+                            print(f"⚠️ Skip Trade: {city}")
+                            continue
+
                         link = POLYMARKET_LINKS.get(city, "https://polymarket.com/")
 
                         msg = f"""

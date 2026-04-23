@@ -1,5 +1,6 @@
 import requests
 import time
+import re
 from datetime import datetime
 
 # =========================
@@ -8,11 +9,15 @@ from datetime import datetime
 TELEGRAM_TOKEN = "DEIN_TOKEN"
 CHAT_ID = "DEINE_CHAT_ID"
 
+# Nur aktive Märkte (Vienna entfernt)
 CITIES = {
-    "Vienna": "https://polymarket.com/event/precipitation-in-vienna-in-april",
     "London": "https://polymarket.com/event/precipitation-in-london-in-april",
     "New York": "https://polymarket.com/event/precipitation-in-nyc-in-april",
     "Hong Kong": "https://polymarket.com/event/precipitation-in-hong-kong-in-april"
+}
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
 }
 
 # =========================
@@ -20,7 +25,10 @@ CITIES = {
 # =========================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+    try:
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+    except Exception as e:
+        print(f"Telegram Fehler: {e}")
 
 # =========================
 # WEATHER
@@ -32,7 +40,7 @@ def get_weather(city):
     current = data["current_condition"][0]
 
     temp = float(current["temp_C"])
-    wind = float(current["windspeedKmph"]) / 3.6
+    wind = float(current["windspeedKmph"]) / 3.6  # m/s
     humidity = float(current["humidity"])
     clouds = float(current["cloudcover"])
 
@@ -56,24 +64,32 @@ def calculate_model_probability(temp, wind, humidity, clouds):
     return min(score * 10, 100)
 
 # =========================
-# MARKET REAL DATA (KEY PART)
+# MARKET (robuster Scrape)
 # =========================
 def get_market_probability(url):
     try:
-        # einfacher Scrape der Seite (Fallback)
-        html = requests.get(url).text
+        html = requests.get(url, headers=HEADERS, timeout=10).text
 
-        # VERY BASIC extraction (stabil genug für jetzt)
-        import re
-        match = re.search(r'(\d{1,2}\.\d)%', html)
+        # Versuche mehrere Patterns (Seite ändert sich oft)
+        patterns = [
+            r'"lastPrice":\s*0\.(\d+)',   # 0.65 -> 65%
+            r'(\d{1,2})\s?¢',            # 65¢
+            r'(\d{1,2})\.\d%'            # 65.3%
+        ]
 
-        if match:
-            prob = float(match.group(1))
-            return prob
-        else:
-            return None
+        for p in patterns:
+            match = re.search(p, html)
+            if match:
+                val = match.group(1)
+                prob = float(val)
+                if prob <= 1:  # falls 0.65 Format
+                    prob = prob * 100
+                return round(prob, 2)
 
-    except:
+        return None
+
+    except Exception as e:
+        print(f"Market Fehler: {e}")
         return None
 
 # =========================
@@ -94,7 +110,7 @@ def is_profitable(model, market):
 # MAIN LOOP
 # =========================
 def run_bot():
-    print("🚀 VALUE BOT (REAL DATA) läuft...")
+    print("🚀 VALUE BOT (Real Data) läuft...")
 
     while True:
         print("\n--- Neue Analyse Runde ---")
@@ -112,7 +128,7 @@ def run_bot():
 
                 profitable, edge = is_profitable(model, market)
 
-                print(f"{city}: Model {model}% | Market {market}% | Edge {edge}%")
+                print(f"{city}: Model {model}% | Market {market}% | Edge {round(edge,2)}%")
 
                 if profitable:
                     msg = f"""💰 VALUE TRADE 💰
@@ -133,20 +149,18 @@ def run_bot():
 
 💸 Einsatz: max $2
 """
-
                     send_telegram(msg)
-
                 else:
                     print(f"❌ Kein Value: {city}")
 
             except Exception as e:
                 print(f"Fehler bei {city}: {e}")
 
-        time.sleep(300)
+        time.sleep(300)  # 5 Minuten
 
 # =========================
 # START
 # =========================
 if __name__ == "__main__":
-    send_telegram("🧠 VALUE BOT ONLINE (Real Market Data aktiv)")
+    send_telegram("🧠 VALUE BOT ONLINE (Vienna entfernt, Profit Mode aktiv)")
     run_bot()

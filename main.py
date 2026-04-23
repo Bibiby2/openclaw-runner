@@ -18,6 +18,13 @@ POLYMARKET_LINKS = {
     "Hong Kong": "https://polymarket.com/event/precipitation-in-hong-kong-in-april"
 }
 
+# 👉 Simulierte Marktpreise (später echte API)
+MARKET_PROB = {
+    "London": 0.75,
+    "New York": 0.65,
+    "Hong Kong": 0.55
+}
+
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={
@@ -29,56 +36,60 @@ def get_weather(city):
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
     return requests.get(url).json()
 
-def smart_decision(data):
+def calculate_probability(data):
     wind = data["wind"]["speed"]
     clouds = data["clouds"]["all"]
     humidity = data["main"]["humidity"]
 
     score = 0
 
-    # Wind Bewertung
     if wind >= 18:
         score += 4
     elif wind >= 14:
         score += 2
 
-    # Clouds Bewertung
     if clouds >= 80:
         score += 3
     elif clouds >= 50:
         score += 1
 
-    # Humidity Bewertung
     if humidity >= 80:
         score += 3
     elif humidity >= 60:
         score += 1
 
-    # Entscheidung
-    if score >= 7:
-        return "BUY_YES", score
-    elif score <= 2:
-        return "BUY_NO", score
-    else:
-        return "SKIP", score
+    # 👉 convert score → probability
+    prob = score / 10
+    return prob, score
 
-def can_send(city, action):
-    key = (city, action)
+def value_decision(city, model_prob):
+    market_prob = MARKET_PROB.get(city, 0.5)
+
+    edge = model_prob - market_prob
+
+    if edge > 0.15:
+        return "BUY_YES", edge, market_prob
+    elif edge < -0.15:
+        return "BUY_NO", edge, market_prob
+    else:
+        return "SKIP", edge, market_prob
+
+def can_send(city):
     now = datetime.utcnow()
 
-    if key not in last_signal_time:
-        last_signal_time[key] = now
+    if city not in last_signal_time:
+        last_signal_time[city] = now
         return True
 
-    if now - last_signal_time[key] > timedelta(minutes=COOLDOWN_MINUTES):
-        last_signal_time[key] = now
+    if now - last_signal_time[city] > timedelta(minutes=COOLDOWN_MINUTES):
+        last_signal_time[city] = now
         return True
 
     return False
 
 def run():
-    print("🚀 SMART BOT läuft...")
-    send_telegram("🧠 Smart Trading Bot ONLINE")
+    print("🚀 VALUE BOT läuft...")
+    send_telegram("💰 Value Trading Bot ONLINE")
 
     while True:
         print("\n--- Analyse ---")
@@ -89,42 +100,38 @@ def run():
 
                 temp = data["main"]["temp"]
                 weather = data["weather"][0]["description"]
-                wind = data["wind"]["speed"]
-                clouds = data["clouds"]["all"]
-                humidity = data["main"]["humidity"]
 
-                action, score = smart_decision(data)
+                model_prob, score = calculate_probability(data)
+                action, edge, market_prob = value_decision(city, model_prob)
 
                 if action == "SKIP":
-                    print(f"⚠️ Skip: {city} (Score {score})")
+                    print(f"❌ No Edge: {city}")
                     continue
 
-                if can_send(city, action):
+                if can_send(city):
 
                     link = POLYMARKET_LINKS.get(city, "https://polymarket.com")
 
                     msg = f"""
-🚨 SMART TRADE 🚨
+💰 VALUE TRADE 💰
 
 📍 {city}
 🌡 {temp}°C
 ☁️ {weather}
 
-🌪 Wind: {wind} m/s
-☁️ Clouds: {clouds}%
-💧 Humidity: {humidity}%
-
-🧠 Score: {score}/10
+🧠 Model: {round(model_prob*100)}%
+📊 Market: {round(market_prob*100)}%
+📈 Edge: {round(edge*100)}%
 
 🎯 ACTION: {action.replace("_", " ")}
 
 🔗 {link}
 
-💰 Einsatz: max $2
+💵 Einsatz: max $2
 """
 
                     send_telegram(msg)
-                    print(f"✅ {action} → {city} (Score {score})")
+                    print(f"✅ VALUE TRADE: {city}")
 
                 else:
                     print(f"— Cooldown: {city}")

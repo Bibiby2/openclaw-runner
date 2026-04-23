@@ -9,9 +9,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 CITIES = ["Vienna", "London", "New York", "Hong Kong"]
 
-HIGH_WIND = 18
-MID_WIND = 14
-
 COOLDOWN_MINUTES = 60
 last_signal_time = {}
 
@@ -32,13 +29,38 @@ def get_weather(city):
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
     return requests.get(url).json()
 
-def decision(wind):
-    if wind >= HIGH_WIND:
-        return "BUY_YES", 9
-    elif wind >= MID_WIND:
-        return "SKIP", 6
+def smart_decision(data):
+    wind = data["wind"]["speed"]
+    clouds = data["clouds"]["all"]
+    humidity = data["main"]["humidity"]
+
+    score = 0
+
+    # Wind Bewertung
+    if wind >= 18:
+        score += 4
+    elif wind >= 14:
+        score += 2
+
+    # Clouds Bewertung
+    if clouds >= 80:
+        score += 3
+    elif clouds >= 50:
+        score += 1
+
+    # Humidity Bewertung
+    if humidity >= 80:
+        score += 3
+    elif humidity >= 60:
+        score += 1
+
+    # Entscheidung
+    if score >= 7:
+        return "BUY_YES", score
+    elif score <= 2:
+        return "BUY_NO", score
     else:
-        return "BUY_NO", 8
+        return "SKIP", score
 
 def can_send(city, action):
     key = (city, action)
@@ -55,8 +77,8 @@ def can_send(city, action):
     return False
 
 def run():
-    print("🚀 AUTO BOT läuft...")
-    send_telegram("🤖 Bot ONLINE (Trading Decision aktiv)")
+    print("🚀 SMART BOT läuft...")
+    send_telegram("🧠 Smart Trading Bot ONLINE")
 
     while True:
         print("\n--- Analyse ---")
@@ -68,30 +90,33 @@ def run():
                 temp = data["main"]["temp"]
                 weather = data["weather"][0]["description"]
                 wind = data["wind"]["speed"]
+                clouds = data["clouds"]["all"]
+                humidity = data["main"]["humidity"]
 
-                action, score = decision(wind)
+                action, score = smart_decision(data)
 
                 if action == "SKIP":
-                    print(f"⚠️ Skip: {city}")
+                    print(f"⚠️ Skip: {city} (Score {score})")
                     continue
 
                 if can_send(city, action):
 
                     link = POLYMARKET_LINKS.get(city, "https://polymarket.com")
 
-                    action_text = "BUY YES" if action == "BUY_YES" else "BUY NO"
-
                     msg = f"""
-🚨 TRADE SIGNAL 🚨
+🚨 SMART TRADE 🚨
 
 📍 {city}
 🌡 {temp}°C
 ☁️ {weather}
 
 🌪 Wind: {wind} m/s
-🧠 Confidence: {score}/10
+☁️ Clouds: {clouds}%
+💧 Humidity: {humidity}%
 
-🎯 ACTION: {action_text}
+🧠 Score: {score}/10
+
+🎯 ACTION: {action.replace("_", " ")}
 
 🔗 {link}
 
@@ -99,7 +124,7 @@ def run():
 """
 
                     send_telegram(msg)
-                    print(f"✅ {action_text} → {city}")
+                    print(f"✅ {action} → {city} (Score {score})")
 
                 else:
                     print(f"— Cooldown: {city}")

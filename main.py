@@ -8,7 +8,12 @@ from datetime import datetime
 TELEGRAM_TOKEN = "DEIN_TOKEN"
 CHAT_ID = "DEINE_CHAT_ID"
 
-CITIES = ["Vienna", "London", "New York", "Hong Kong"]
+CITIES = {
+    "Vienna": "https://polymarket.com/event/precipitation-in-vienna-in-april",
+    "London": "https://polymarket.com/event/precipitation-in-london-in-april",
+    "New York": "https://polymarket.com/event/precipitation-in-nyc-in-april",
+    "Hong Kong": "https://polymarket.com/event/precipitation-in-hong-kong-in-april"
+}
 
 # =========================
 # TELEGRAM
@@ -18,7 +23,7 @@ def send_telegram(msg):
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
 # =========================
-# WEATHER DATA
+# WEATHER
 # =========================
 def get_weather(city):
     url = f"https://wttr.in/{city}?format=j1"
@@ -34,7 +39,7 @@ def get_weather(city):
     return temp, wind, humidity, clouds
 
 # =========================
-# MODEL (DEIN EDGE MODEL)
+# MODEL
 # =========================
 def calculate_model_probability(temp, wind, humidity, clouds):
     score = 0
@@ -48,40 +53,62 @@ def calculate_model_probability(temp, wind, humidity, clouds):
     if temp < 15:
         score += 2
 
-    return min(score * 10, 100)  # max 100%
+    return min(score * 10, 100)
 
 # =========================
-# MARKET (SIMULIERT – später ersetzen)
+# MARKET REAL DATA (KEY PART)
 # =========================
-def get_market_probability():
-    import random
-    return random.randint(40, 80)
+def get_market_probability(url):
+    try:
+        # einfacher Scrape der Seite (Fallback)
+        html = requests.get(url).text
+
+        # VERY BASIC extraction (stabil genug für jetzt)
+        import re
+        match = re.search(r'(\d{1,2}\.\d)%', html)
+
+        if match:
+            prob = float(match.group(1))
+            return prob
+        else:
+            return None
+
+    except:
+        return None
 
 # =========================
 # VALUE FILTER
 # =========================
 def is_profitable(model, market):
+    if market is None:
+        return False, 0
+
     edge = model - market
 
     if edge > 10 and model >= 60 and market < 90:
         return True, edge
+
     return False, edge
 
 # =========================
 # MAIN LOOP
 # =========================
 def run_bot():
-    print("🚀 VALUE BOT läuft...")
+    print("🚀 VALUE BOT (REAL DATA) läuft...")
 
     while True:
         print("\n--- Neue Analyse Runde ---")
 
-        for city in CITIES:
+        for city, url in CITIES.items():
             try:
                 temp, wind, humidity, clouds = get_weather(city)
 
                 model = calculate_model_probability(temp, wind, humidity, clouds)
-                market = get_market_probability()
+                market = get_market_probability(url)
+
+                if market is None:
+                    print(f"⚠️ Kein Market Data: {city}")
+                    continue
 
                 profitable, edge = is_profitable(model, market)
 
@@ -98,9 +125,11 @@ def run_bot():
 
 🧠 Model: {model}%
 📊 Market: {market}%
-📈 Edge: +{edge}%
+📈 Edge: +{round(edge,2)}%
 
 🎯 ACTION: BUY YES
+
+🔗 {url}
 
 💸 Einsatz: max $2
 """
@@ -108,16 +137,16 @@ def run_bot():
                     send_telegram(msg)
 
                 else:
-                    print(f"❌ Skip (kein Value): {city}")
+                    print(f"❌ Kein Value: {city}")
 
             except Exception as e:
                 print(f"Fehler bei {city}: {e}")
 
-        time.sleep(300)  # alle 5 Minuten
+        time.sleep(300)
 
 # =========================
 # START
 # =========================
 if __name__ == "__main__":
-    send_telegram("✅ VALUE BOT ONLINE (Profit Mode aktiv)")
+    send_telegram("🧠 VALUE BOT ONLINE (Real Market Data aktiv)")
     run_bot()

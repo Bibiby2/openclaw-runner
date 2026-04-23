@@ -3,105 +3,52 @@ import os
 import time
 from datetime import datetime, timedelta
 
-# ==============================
-# ENV
-# ==============================
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ==============================
-# SETTINGS
-# ==============================
 CITIES = ["Vienna", "London", "New York", "Hong Kong"]
 
-HOT_THRESHOLD = 30
-COLD_THRESHOLD = 3
-WIND_THRESHOLD = 14   # 🔥 erhöht (war 12)
+WIND_THRESHOLD = 14
+STRONG_WIND = 18
 
 COOLDOWN_MINUTES = 60
 last_signal_time = {}
 
 POLYMARKET_LINKS = {
-    "Vienna": "https://polymarket.com/",
     "London": "https://polymarket.com/event/precipitation-in-london-in-april",
     "New York": "https://polymarket.com/event/precipitation-in-nyc-in-april",
     "Hong Kong": "https://polymarket.com/event/precipitation-in-hong-kong-in-april"
 }
 
-# ==============================
-# TELEGRAM
-# ==============================
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {
+    requests.post(url, data={
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message
-    }
-    try:
-        requests.post(url, data=data, timeout=10)
-    except Exception as e:
-        print("Telegram Fehler:", e)
+    })
 
-# ==============================
-# WEATHER
-# ==============================
 def get_weather(city):
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
     return requests.get(url).json()
 
-# ==============================
-# SIGNAL LOGIK (VERBESSERT)
-# ==============================
-def get_signal(city, data):
-    temp = data["main"]["temp"]
-    weather_main = data["weather"][0]["main"].lower()
-    description = data["weather"][0]["description"].lower()
+def confidence_score(wind):
+    if wind >= 20:
+        return 9
+    elif wind >= 18:
+        return 8
+    elif wind >= 16:
+        return 7
+    elif wind >= 14:
+        return 6
+    return 0
+
+def get_signal(data):
     wind = data["wind"]["speed"]
-
-    # 🌧 Starkregen (nur heavy!)
-    if "rain" in weather_main or "thunderstorm" in weather_main:
-        if "heavy" in description or "thunderstorm" in description:
-            return "RAIN_STRONG", description
-
-    # 🔥 Extreme Hitze
-    if temp >= HOT_THRESHOLD:
-        return "EXTREME_HEAT", f"{temp}°C"
-
-    # ❄️ Extreme Kälte
-    if temp <= COLD_THRESHOLD:
-        return "EXTREME_COLD", f"{temp}°C"
-
-    # 🌪 NUR STARKER WIND (FILTER!)
     if wind >= WIND_THRESHOLD:
-        return "HIGH_WIND", f"{wind} m/s"
-
+        return "HIGH_WIND", wind
     return None, None
 
-# ==============================
-# TRADE DECISION (SMARTER)
-# ==============================
-def trade_decision(signal, reason):
-    if signal == "RAIN_STRONG":
-        return "BUY YES 🌧", "Starker Regen wahrscheinlich"
-
-    if signal == "EXTREME_HEAT":
-        return "BUY YES 🔥", "Extreme Hitze wahrscheinlich"
-
-    if signal == "HIGH_WIND":
-        wind_speed = float(reason.split()[0])
-
-        if wind_speed >= 18:
-            return "BUY YES 🌪", "Sehr starker Wind (High Confidence)"
-
-        if wind_speed >= 14:
-            return "BUY YES 🌪", "Starker Wind (Medium Confidence)"
-
-    return "NO TRADE", "Zu schwaches Signal"
-
-# ==============================
-# COOLDOWN
-# ==============================
 def can_send(city, signal):
     key = (city, signal)
     now = datetime.utcnow()
@@ -116,12 +63,9 @@ def can_send(city, signal):
 
     return False
 
-# ==============================
-# MAIN LOOP
-# ==============================
 def run():
-    print("🚀 SMART TRADING BOT läuft...")
-    send_telegram("✅ Bot ONLINE (Smart Trading aktiv)")
+    print("🚀 AUTO BOT läuft...")
+    send_telegram("✅ Bot ONLINE (Auto Trading vorbereitet)")
 
     while True:
         print("\n--- Analyse ---")
@@ -132,49 +76,48 @@ def run():
 
                 temp = data["main"]["temp"]
                 weather = data["weather"][0]["description"]
+                wind = data["wind"]["speed"]
 
-                print(f"{city}: {temp}°C | {weather}")
+                print(f"{city}: {temp}°C | Wind {wind}")
 
-                signal, reason = get_signal(city, data)
+                signal, wind_val = get_signal(data)
 
-                if signal:
-                    if can_send(city, signal):
+                if signal and can_send(city, signal):
 
-                        action, explanation = trade_decision(signal, reason)
+                    score = confidence_score(wind_val)
 
-                        # ❌ Skip schlechte Trades
-                        if action == "NO TRADE":
-                            print(f"⚠️ Skip Trade: {city}")
-                            continue
+                    # ❌ Skip schlechte Trades
+                    if score < 7:
+                        print(f"❌ Skip Low Confidence: {city}")
+                        continue
 
-                        link = POLYMARKET_LINKS.get(city, "https://polymarket.com/")
+                    strength = "HIGH" if wind_val >= STRONG_WIND else "MEDIUM"
 
-                        msg = f"""
-🚨 TRADE SIGNAL 🚨
+                    link = POLYMARKET_LINKS.get(city, "https://polymarket.com/")
+
+                    msg = f"""
+🚨 TRADE ALERT 🚨
 
 📍 {city}
 🌡 {temp}°C
 ☁️ {weather}
 
-📊 {signal}
-🧠 {reason}
+🌪 Wind: {wind_val} m/s
+📊 Strength: {strength}
+🧠 Confidence: {score}/10
 
-💡 {action}
-📈 {explanation}
+💡 ACTION: BUY YES
 
 🔗 {link}
 
-⚠️ Max Einsatz: $2
+⚠️ Einsatz: max $2
 """
 
-                        send_telegram(msg)
-                        print(f"✅ TRADE SIGNAL: {city}")
-
-                    else:
-                        print(f"⏳ Cooldown: {city}")
+                    send_telegram(msg)
+                    print(f"✅ TRADE: {city}")
 
                 else:
-                    print(f"— Kein Signal für {city}")
+                    print(f"— Kein Signal: {city}")
 
             except Exception as e:
                 print("Fehler:", e)

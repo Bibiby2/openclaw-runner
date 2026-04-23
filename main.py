@@ -15,17 +15,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # ==============================
 CITIES = ["Vienna", "London", "New York", "Hong Kong"]
 
-# starke Signal-Schwellen (B-Modus)
-HOT_THRESHOLD = 30        # °C
-COLD_THRESHOLD = 3        # °C
-WIND_THRESHOLD = 12       # m/s (starker Wind)
-RAIN_REQUIRED = True      # Regen muss explizit erkannt werden
+HOT_THRESHOLD = 30
+COLD_THRESHOLD = 3
+WIND_THRESHOLD = 12
 
-# Anti-Spam: pro Stadt/Signal nur alle X Minuten erneut senden
 COOLDOWN_MINUTES = 60
-
-# interner Speicher für letzte Signale
-last_signal_time = {}  # key: (city, signal) -> datetime
+last_signal_time = {}
 
 # ==============================
 # TELEGRAM
@@ -37,8 +32,7 @@ def send_telegram(message):
         "text": message
     }
     try:
-        r = requests.post(url, data=data, timeout=10)
-        print("Telegram status:", r.text)
+        requests.post(url, data=data, timeout=10)
     except Exception as e:
         print("Telegram Fehler:", e)
 
@@ -46,50 +40,39 @@ def send_telegram(message):
 # WEATHER
 # ==============================
 def get_weather(city):
-    url = (
-        f"http://api.openweathermap.org/data/2.5/weather"
-        f"?q={city}&appid={WEATHER_API_KEY}&units=metric"
-    )
-    r = requests.get(url, timeout=10)
-    return r.json()
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
+    return requests.get(url).json()
 
 # ==============================
-# SIGNAL LOGIK (STARK)
+# SIGNAL LOGIK
 # ==============================
-def analyze_strong_signal(city, data):
-    """
-    Gibt (signal, reason_text) zurück oder (None, None)
-    """
-    main = data.get("main", {})
-    weather_list = data.get("weather", [{}])
-    wind = data.get("wind", {})
+def get_signal(city, data):
+    temp = data["main"]["temp"]
+    weather_main = data["weather"][0]["main"].lower()
+    description = data["weather"][0]["description"].lower()
+    wind = data["wind"]["speed"]
 
-    temp = main.get("temp")
-    description = weather_list[0].get("description", "").lower()
-    main_weather = weather_list[0].get("main", "").lower()
-    wind_speed = wind.get("speed", 0)
-
-    # 1) Starkes Regen-Signal (inkl. Thunderstorm)
-    if RAIN_REQUIRED and ("rain" in main_weather or "thunderstorm" in main_weather):
+    # 🌧 Starkregen
+    if "rain" in weather_main or "thunderstorm" in weather_main:
         if "heavy" in description or "thunderstorm" in description:
-            return "RAIN_STRONG", f"Heavy rain/thunderstorm detected ({description})"
+            return "RAIN_STRONG", f"{description}"
 
-    # 2) Extreme Hitze
-    if temp is not None and temp >= HOT_THRESHOLD:
-        return "EXTREME_HEAT", f"Temperature {temp}°C ≥ {HOT_THRESHOLD}°C"
+    # 🔥 Extreme Hitze
+    if temp >= HOT_THRESHOLD:
+        return "EXTREME_HEAT", f"{temp}°C"
 
-    # 3) Extreme Kälte
-    if temp is not None and temp <= COLD_THRESHOLD:
-        return "EXTREME_COLD", f"Temperature {temp}°C ≤ {COLD_THRESHOLD}°C"
+    # ❄️ Extreme Kälte
+    if temp <= COLD_THRESHOLD:
+        return "EXTREME_COLD", f"{temp}°C"
 
-    # 4) Starker Wind (optional als Edge)
-    if wind_speed is not None and wind_speed >= WIND_THRESHOLD:
-        return "HIGH_WIND", f"Wind {wind_speed} m/s ≥ {WIND_THRESHOLD} m/s"
+    # 🌪 Starker Wind
+    if wind >= WIND_THRESHOLD:
+        return "HIGH_WIND", f"{wind} m/s"
 
     return None, None
 
 # ==============================
-# COOLDOWN CHECK
+# COOLDOWN
 # ==============================
 def can_send(city, signal):
     key = (city, signal)
@@ -106,71 +89,52 @@ def can_send(city, signal):
     return False
 
 # ==============================
-# MESSAGE FORMAT
-# ==============================
-def build_message(city, signal, reason, data):
-    temp = data["main"]["temp"]
-    weather_desc = data["weather"][0]["description"]
-
-    strategy = {
-        "RAIN_STRONG": "Buy rain / precipitation markets",
-        "EXTREME_HEAT": "Buy high temperature markets",
-        "EXTREME_COLD": "Buy low temperature markets",
-        "HIGH_WIND": "Check weather volatility markets"
-    }.get(signal, "Check market manually")
-
-    msg = f"""
-🚨 HIGH QUALITY SIGNAL 🚨
-
-📍 City: {city}
-🌡 Temp: {temp}°C
-☁️ Weather: {weather_desc}
-
-📊 Signal: {signal}
-🧠 Reason: {reason}
-
-👉 Action:
-{strategy}
-
-⚠️ Manual confirmation recommended
-"""
-    return msg.strip()
-
-# ==============================
-# LOOP
+# MAIN LOOP
 # ==============================
 def run():
-    print("🚀 STRONG SIGNAL BOT gestartet...")
-    send_telegram("✅ Bot ONLINE (Strong Signal Mode)")
+    print("🚀 STRONG BOT läuft...")
+    send_telegram("✅ Bot ONLINE (Strong Mode aktiv)")
 
     while True:
-        print("\n--- Neue Analyse Runde ---")
+        print("\n--- Analyse ---")
 
         for city in CITIES:
             try:
                 data = get_weather(city)
 
-                # basic log
                 temp = data["main"]["temp"]
-                weather = data["weather"][0]["main"]
+                weather = data["weather"][0]["description"]
+
                 print(f"{city}: {temp}°C | {weather}")
 
-                signal, reason = analyze_strong_signal(city, data)
+                signal, reason = get_signal(city, data)
 
                 if signal:
                     if can_send(city, signal):
-                        print(f"✅ SIGNAL: {city} -> {signal}")
-                        msg = build_message(city, signal, reason, data)
+                        msg = f"""
+🚨 SIGNAL 🚨
+
+📍 {city}
+🌡 {temp}°C
+☁️ {weather}
+
+📊 {signal}
+🧠 {reason}
+
+👉 Trade prüfen!
+"""
                         send_telegram(msg)
+                        print(f"✅ SIGNAL gesendet: {city}")
                     else:
-                        print(f"⏳ Cooldown aktiv für {city} ({signal})")
+                        print(f"⏳ Cooldown: {city}")
+
                 else:
-                    print(f"— Kein starkes Signal für {city}")
+                    print(f"— Kein Signal für {city}")
 
             except Exception as e:
-                print(f"❌ Fehler bei {city}:", e)
+                print("Fehler:", e)
 
-        time.sleep(300)  # alle 5 Minuten
+        time.sleep(300)
 
 if __name__ == "__main__":
     run()

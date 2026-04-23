@@ -1,140 +1,82 @@
 import requests
-import time
 import os
+import time
+import random
 
-# =========================
-# ENV VARS
-# =========================
+# ENV
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# =========================
-# SETTINGS
-# =========================
 CITIES = ["Vienna", "London", "New York", "Hong Kong"]
 
-TEST_MODE = False  # ❗JETZT AUS
+balance = 100  # Start Kapital (Simulation)
 
-# =========================
-# WEATHER
-# =========================
-def get_weather(city):
-    try:
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
-        data = requests.get(url).json()
-
-        return {
-            "city": city,
-            "temp": data["main"]["temp"],
-            "description": data["weather"][0]["description"].lower()
-        }
-
-    except Exception as e:
-        print("Weather Error:", e)
-        return None
-
-# =========================
-# TELEGRAM
-# =========================
 def send_telegram(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message
-        })
-        print("📩 Sent:", message)
-    except Exception as e:
-        print("Telegram Error:", e)
+        requests.post(url, data=data)
+    except:
+        print("Telegram Fehler")
 
-# =========================
-# POLYMARKET
-# =========================
-def get_polymarket_markets():
-    try:
-        url = "https://gamma-api.polymarket.com/markets"
-        return requests.get(url).json()
-    except Exception as e:
-        print("Polymarket Error:", e)
-        return []
+def get_weather(city):
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
+    return requests.get(url).json()
 
-# =========================
-# DECISION ENGINE 🧠 (REAL)
-# =========================
-def analyze_and_signal(weather, markets):
-    signals = []
+def analyze(city, data):
+    temp = data["main"]["temp"]
+    weather = data["weather"][0]["main"].lower()
 
-    city = weather["city"].lower()
-    temp = weather["temp"]
-    desc = weather["description"]
+    if "rain" in weather:
+        return "RAIN"
+    elif temp > 28:
+        return "HOT"
+    elif temp < 5:
+        return "COLD"
+    return None
 
-    for market in markets[:50]:
-        question = market.get("question", "").lower()
-        price = market.get("lastTradePrice")
+# 🔥 SIMULIERTER TRADE
+def execute_trade(city, signal):
+    global balance
 
-        if not price:
-            continue
+    trade_amount = 2  # pro Trade
+    outcome = random.choice(["WIN", "LOSS"])  # Simulation
 
-        try:
-            price = float(price)
-        except:
-            continue
+    if outcome == "WIN":
+        profit = trade_amount * 0.8
+        balance += profit
+    else:
+        balance -= trade_amount
 
-        # 🌧 Regen Strategie
-        if city in question and ("rain" in question or "precipitation" in question):
-            if "rain" in desc:
-                if price < 0.65:
-                    signals.append(f"🌧 BUY YES → {question} (rain undervalued)")
-            else:
-                if price > 0.75:
-                    signals.append(f"☀️ BUY NO → {question} (no rain expected)")
+    message = f"""
+🤖 AUTO TRADE (SIMULATION)
 
-        # 🌥 Cloud → leichte Chance
-        if city in question and "rain" in question:
-            if "cloud" in desc and price < 0.55:
-                signals.append(f"🌥 EARLY BUY → {question} (cloud setup)")
+📍 {city}
+📊 Signal: {signal}
+💸 Einsatz: ${trade_amount}
+🎯 Ergebnis: {outcome}
 
-        # 🔥 Temperatur Strategie
-        if city in question and "temperature" in question:
-            if temp > 25 and price < 0.7:
-                signals.append(f"🔥 BUY YES → {question} (heat edge)")
-            elif temp < 10 and price > 0.65:
-                signals.append(f"❄️ BUY NO → {question} (cold edge)")
+💰 Balance: ${round(balance,2)}
+"""
+    send_telegram(message)
 
-    return signals
-
-# =========================
-# MAIN
-# =========================
-def main():
-    print("🚀 REAL BOT läuft...")
+def run():
+    print("AUTO BOT läuft (Simulation)...")
 
     while True:
-        print("\n--- Analyse ---")
-
-        markets = get_polymarket_markets()
-
         for city in CITIES:
-            weather = get_weather(city)
+            try:
+                data = get_weather(city)
+                signal = analyze(city, data)
 
-            if not weather:
-                continue
+                if signal:
+                    execute_trade(city, signal)
 
-            print(f"{city}: {weather['temp']}°C | {weather['description']}")
-
-            signals = analyze_and_signal(weather, markets)
-
-            if signals:
-                for signal in signals:
-                    send_telegram(f"📊 SIGNAL ({city}):\n{signal}")
-            else:
-                print(f"No signals for {city}")
+            except Exception as e:
+                print("Fehler:", e)
 
         time.sleep(300)
 
-# =========================
-# START
-# =========================
 if __name__ == "__main__":
-    main()
+    run()

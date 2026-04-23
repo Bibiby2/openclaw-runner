@@ -22,6 +22,13 @@ WIND_THRESHOLD = 12
 COOLDOWN_MINUTES = 60
 last_signal_time = {}
 
+POLYMARKET_LINKS = {
+    "Vienna": "https://polymarket.com/",
+    "London": "https://polymarket.com/event/precipitation-in-london-in-april",
+    "New York": "https://polymarket.com/event/precipitation-in-nyc-in-april",
+    "Hong Kong": "https://polymarket.com/event/precipitation-in-hong-kong-in-april"
+}
+
 # ==============================
 # TELEGRAM
 # ==============================
@@ -52,24 +59,32 @@ def get_signal(city, data):
     description = data["weather"][0]["description"].lower()
     wind = data["wind"]["speed"]
 
-    # 🌧 Starkregen
     if "rain" in weather_main or "thunderstorm" in weather_main:
         if "heavy" in description or "thunderstorm" in description:
-            return "RAIN_STRONG", f"{description}"
+            return "RAIN_STRONG", description
 
-    # 🔥 Extreme Hitze
     if temp >= HOT_THRESHOLD:
         return "EXTREME_HEAT", f"{temp}°C"
 
-    # ❄️ Extreme Kälte
     if temp <= COLD_THRESHOLD:
         return "EXTREME_COLD", f"{temp}°C"
 
-    # 🌪 Starker Wind
     if wind >= WIND_THRESHOLD:
         return "HIGH_WIND", f"{wind} m/s"
 
     return None, None
+
+# ==============================
+# TRADE DECISION
+# ==============================
+def trade_decision(signal):
+    if signal == "RAIN_STRONG":
+        return "BUY YES 🌧", "Regen wahrscheinlich"
+    if signal == "EXTREME_HEAT":
+        return "BUY YES 🔥", "Hitze wahrscheinlich"
+    if signal == "HIGH_WIND":
+        return "BUY YES 🌪", "Wind Event aktiv"
+    return "NO TRADE", "Keine klare Edge"
 
 # ==============================
 # COOLDOWN
@@ -92,8 +107,8 @@ def can_send(city, signal):
 # MAIN LOOP
 # ==============================
 def run():
-    print("🚀 STRONG BOT läuft...")
-    send_telegram("✅ Bot ONLINE (Strong Mode aktiv)")
+    print("🚀 BOT mit Trading läuft...")
+    send_telegram("✅ Bot ONLINE (Trading Mode aktiv)")
 
     while True:
         print("\n--- Analyse ---")
@@ -111,8 +126,12 @@ def run():
 
                 if signal:
                     if can_send(city, signal):
+
+                        action, explanation = trade_decision(signal)
+                        link = POLYMARKET_LINKS.get(city, "https://polymarket.com/")
+
                         msg = f"""
-🚨 SIGNAL 🚨
+🚨 TRADE SIGNAL 🚨
 
 📍 {city}
 🌡 {temp}°C
@@ -121,10 +140,17 @@ def run():
 📊 {signal}
 🧠 {reason}
 
-👉 Trade prüfen!
+💡 {action}
+📈 {explanation}
+
+🔗 {link}
+
+⚠️ Max Einsatz: $2
 """
+
                         send_telegram(msg)
-                        print(f"✅ SIGNAL gesendet: {city}")
+                        print(f"✅ TRADE SIGNAL: {city}")
+
                     else:
                         print(f"⏳ Cooldown: {city}")
 

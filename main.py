@@ -15,20 +15,33 @@ CITIES = {
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+    try:
+        requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+    except:
+        print("Telegram Error")
 
 def get_weather(lat, lon):
     url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric"
-    return requests.get(url).json()
+    try:
+        res = requests.get(url).json()
+        return res
+    except:
+        return {}
+
+def safe_get(data, path, default=0):
+    """Safe dictionary access"""
+    try:
+        for key in path:
+            data = data[key]
+        return data
+    except:
+        return default
 
 def calculate_model(data):
-    wind = data["wind"]["speed"]
-    humidity = data["main"]["humidity"]
-    clouds = data["clouds"]["all"]
-    
-    rain = 0
-    if "rain" in data:
-        rain = data["rain"].get("1h", 0)
+    wind = safe_get(data, ["wind", "speed"], 0)
+    humidity = safe_get(data, ["main", "humidity"], 0)
+    clouds = safe_get(data, ["clouds", "all"], 0)
+    rain = safe_get(data, ["rain", "1h"], 0)
 
     score = 0
 
@@ -51,14 +64,18 @@ def fake_market():
     return round(40 + (time.time() % 20), 2)
 
 def run():
-    send_telegram("🚀 FINAL BOT gestartet")
+    send_telegram("🚀 FINAL BOT gestartet (SAFE MODE)")
 
     while True:
         print("Neue Analyse...")
 
         for city, coord in CITIES.items():
             data = get_weather(coord["lat"], coord["lon"])
-            
+
+            if not data or "main" not in data:
+                print(f"⚠️ Keine gültigen Daten für {city}")
+                continue
+
             try:
                 model = calculate_model(data)
                 market = fake_market()

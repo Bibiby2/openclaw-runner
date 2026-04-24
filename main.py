@@ -1,68 +1,157 @@
-import requests
-import time
 import os
+import time
+import requests
+from datetime import datetime
 
+# ========================
+# ENV
+# ========================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-CITIES = {
-    "New York": {"lat": 40.7128, "lon": -74.0060},
-    "London": {"lat": 51.5074, "lon": -0.1278},
-    "Hong Kong": {"lat": 22.3193, "lon": 114.1694}
+# ========================
+# SETTINGS
+# ========================
+CITIES = ["London", "New York", "Hong Kong"]
+BET_AMOUNT = 2
+EDGE_THRESHOLD = 5  # nur Trades >5% Edge
+
+# ========================
+# STORAGE (Paper Trading)
+# ========================
+portfolio = {
+    "balance": 100.0,
+    "trades": [],
+    "wins": 0,
+    "losses": 0
 }
 
+# ========================
+# TELEGRAM
+# ========================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
-def get_weather(lat, lon):
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric"
-    
-    try:
-        res = requests.get(url)
-        data = res.json()
-        
-        print("RAW API RESPONSE:", data)  # 🔥 WICHTIG
-        
-        return data
-    except Exception as e:
-        print("API Error:", e)
-        return {}
+# ========================
+# WEATHER
+# ========================
+def get_weather(city):
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
+    r = requests.get(url)
+    return r.json()
 
-def safe_get(data, path, default=0):
-    try:
-        for key in path:
-            data = data[key]
-        return data
-    except:
-        return default
+# ========================
+# MODEL (simple)
+# ========================
+def calculate_model(weather):
+    rain = weather.get("rain", {}).get("1h", 0)
+    clouds = weather["clouds"]["all"]
+    humidity = weather["main"]["humidity"]
 
-def calculate_model(data):
-    wind = safe_get(data, ["wind", "speed"], 0)
-    humidity = safe_get(data, ["main", "humidity"], 0)
-    clouds = safe_get(data, ["clouds", "all"], 0)
-    rain = safe_get(data, ["rain", "1h"], 0)
+    score = 0
 
-    score = (rain * 15) + (clouds * 0.3) + (humidity * 0.2) - (wind * 2)
-    return max(0, min(100, score))
+    if rain > 0:
+        score += 40
+    if clouds > 70:
+        score += 30
+    if humidity > 70:
+        score += 30
 
+    return min(score, 100)
+
+# ========================
+# MARKET SIMULATION
+# ========================
+def get_market_probability():
+    return round(30 + (70 * (time.time() % 1)), 2)  # fake dynamic %
+
+# ========================
+# PAPER TRADE
+# ========================
+def place_paper_trade(city, model, market):
+
+    edge = model - market
+
+    if edge < EDGE_THRESHOLD:
+        print(f"❌ No Value: {city}")
+        return
+
+    # Entscheidung
+    action = "BUY YES" if model > market else "BUY NO"
+
+    trade = {
+        "city": city,
+        "model": model,
+        "market": market,
+        "edge": edge,
+        "action": action,
+        "amount": BET_AMOUNT,
+        "time": datetime.utcnow()
+    }
+
+    portfolio["trades"].append(trade)
+
+    send_telegram(
+        f"💰 PAPER TRADE\n"
+        f"📍 {city}\n"
+        f"🧠 Model: {model}%\n"
+        f"📊 Market: {market}%\n"
+        f"📈 Edge: {round(edge,2)}%\n"
+        f"🎯 {action}\n"
+        f"💵 {BET_AMOUNT}$"
+    )
+
+    resolve_trade(trade)
+
+# ========================
+# RESULT SIMULATION
+# ========================
+def resolve_trade(trade):
+    # Fake Ergebnis (random)
+    outcome = (time.time() % 2) > 1
+
+    if outcome:
+        profit = trade["amount"] * 0.8
+        portfolio["balance"] += profit
+        portfolio["wins"] += 1
+        result = "WIN ✅"
+    else:
+        portfolio["balance"] -= trade["amount"]
+        portfolio["losses"] += 1
+        result = "LOSS ❌"
+
+    send_telegram(
+        f"📊 RESULT\n"
+        f"{result}\n"
+        f"💰 Balance: {round(portfolio['balance'],2)}$\n"
+        f"🏆 Wins: {portfolio['wins']} | ❌ Losses: {portfolio['losses']}"
+    )
+
+# ========================
+# MAIN LOOP
+# ========================
 def run():
-    send_telegram("🔍 DEBUG MODE gestartet")
+    send_telegram("🤖 Paper Trading gestartet")
 
     while True:
         print("Neue Analyse...")
 
-        for city, coord in CITIES.items():
-            data = get_weather(coord["lat"], coord["lon"])
+        for city in CITIES:
+            try:
+                weather = get_weather(city)
+                model = calculate_model(weather)
+                market = get_market_probability()
 
-            if "main" not in data:
-                print(f"❌ API Problem für {city}")
-                continue
+                print(f"{city}: Model {model} | Market {market}")
 
-            model = calculate_model(data)
-            print(f"{city} Model:", model)
+                place_paper_trade(city, model, market)
 
-        time.sleep(300)
+            except Exception as e:
+                print("Error:", e)
 
-run()
+        time.sleep(60)
+
+if __name__ == "__main__":
+    run()

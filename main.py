@@ -6,19 +6,15 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 WEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-EDGE_THRESHOLD = 10
+EDGE_THRESHOLD = 8   # leicht reduziert für mehr Trades
 STAKE = 2
-
-CITIES = ["New York", "London", "Hong Kong"]
-
-RAIN_KEYWORDS = ["rain", "precipitation", "shower", "rainfall"]
 
 # ---------------- TELEGRAM ----------------
 def send(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
 
-# ---------------- WEATHER ----------------
+# ---------------- WEATHER MODEL ----------------
 def get_weather(city):
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
     r = requests.get(url).json()
@@ -26,74 +22,95 @@ def get_weather(city):
     rain = r.get("rain", {}).get("1h", 0)
     clouds = r["clouds"]["all"]
     humidity = r["main"]["humidity"]
+    temp = r["main"]["temp"]
 
-    prob = (clouds * 0.4) + (humidity * 0.3) + (rain * 30)
-    return min(prob, 100)
+    # stärkeres Modell
+    prob = (clouds * 0.3) + (humidity * 0.2) + (rain * 40)
 
-# ---------------- MARKET SEARCH ----------------
-def find_market(city):
-    try:
-        url = "https://gamma-api.polymarket.com/markets"
-        markets = requests.get(url).json()
+    return min(prob, 100), temp
 
-        for m in markets:
-            title = m.get("question", "").lower()
+# ---------------- GET ALL MARKETS ----------------
+def get_markets():
+    url = "https://gamma-api.polymarket.com/markets"
+    return requests.get(url).json()
 
-            if city.lower() in title:
-                if any(word in title for word in RAIN_KEYWORDS):
-                    yes_price = float(m["outcomePrices"][0])
-                    return yes_price * 100
+# ---------------- FILTER WEATHER ----------------
+def is_weather_market(title):
+    keywords = ["temperature", "rain", "precipitation", "weather", "°c"]
+    return any(k in title for k in keywords)
 
-        return None
+# ---------------- EXTRACT CITY ----------------
+def extract_city(title):
+    cities = ["new york", "london", "hong kong", "tokyo", "paris", "shanghai", "seoul"]
 
-    except Exception as e:
-        print("Market Error:", e)
-        return None
-
-# ---------------- ANALYSE ----------------
-def analyze(city):
-    model = get_weather(city)
-    market = find_market(city)
-
-    if market is None:
-        print(f"⚠️ Kein passender Market: {city}")
-        return None
-
-    edge = model - market
-
-    print(f"{city}: Model {model:.1f}% | Market {market:.1f}% | Edge {edge:.1f}%")
-
-    if edge > EDGE_THRESHOLD:
-        return {
-            "city": city,
-            "model": model,
-            "market": market,
-            "edge": edge
-        }
+    for c in cities:
+        if c in title:
+            return c.title()
 
     return None
 
+# ---------------- ANALYZE ----------------
+def analyze_all():
+    markets = get_markets()
+    best_trade = None
+
+    for m in markets:
+        title = m.get("question", "").lower()
+
+        if not is_weather_market(title):
+            continue
+
+        city = extract_city(title)
+        if not city:
+            continue
+
+        try:
+            market = float(m["outcomePrices"][0]) * 100
+        except:
+            continue
+
+        model, temp = get_weather(city)
+
+        edge = model - market
+
+        print(f"{city} | Model {model:.1f} | Market {market:.1f} | Edge {edge:.1f}")
+
+        if edge > EDGE_THRESHOLD:
+            if not best_trade or edge > best_trade["edge"]:
+                best_trade = {
+                    "city": city,
+                    "model": model,
+                    "market": market,
+                    "edge": edge,
+                    "title": m["question"]
+                }
+
+    return best_trade
+
 # ---------------- MAIN ----------------
-send("🚀 REAL DATA BOT (B2 FINAL) gestartet")
+send("🚀 B3 BOT (FULL MARKET SCAN) gestartet")
 
 while True:
     print("\n--- Neue Analyse ---")
 
-    for city in CITIES:
-        result = analyze(city)
+    trade = analyze_all()
 
-        if result:
-            msg = f"""
-💰 REAL TRADE
-📍 {result['city']}
+    if trade:
+        msg = f"""
+💰 BEST TRADE
+📍 {trade['city']}
 
-🧠 Model: {result['model']:.1f}%
-📊 Market: {result['market']:.1f}%
-📈 Edge: {result['edge']:.1f}%
+📊 {trade['title']}
+
+🧠 Model: {trade['model']:.1f}%
+📊 Market: {trade['market']:.1f}%
+📈 Edge: {trade['edge']:.1f}%
 
 🎯 BUY YES
 💵 ${STAKE}
 """
-            send(msg)
+        send(msg)
+    else:
+        print("❌ Kein Trade gefunden")
 
     time.sleep(120)

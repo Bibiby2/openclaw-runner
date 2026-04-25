@@ -11,6 +11,8 @@ STAKE = 2
 
 CITIES = ["New York", "London", "Hong Kong"]
 
+RAIN_KEYWORDS = ["rain", "precipitation", "shower", "rainfall"]
+
 # ---------------- TELEGRAM ----------------
 def send(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -28,18 +30,19 @@ def get_weather(city):
     prob = (clouds * 0.4) + (humidity * 0.3) + (rain * 30)
     return min(prob, 100)
 
-# ---------------- POLYMARKET SEARCH ----------------
+# ---------------- MARKET SEARCH ----------------
 def find_market(city):
     try:
         url = "https://gamma-api.polymarket.com/markets"
-        r = requests.get(url).json()
+        markets = requests.get(url).json()
 
-        for m in r:
+        for m in markets:
             title = m.get("question", "").lower()
 
-            if city.lower() in title and "rain" in title:
-                yes_price = float(m["outcomePrices"][0])
-                return yes_price * 100
+            if city.lower() in title:
+                if any(word in title for word in RAIN_KEYWORDS):
+                    yes_price = float(m["outcomePrices"][0])
+                    return yes_price * 100
 
         return None
 
@@ -53,7 +56,7 @@ def analyze(city):
     market = find_market(city)
 
     if market is None:
-        print(f"❌ Kein Market gefunden: {city}")
+        print(f"⚠️ Kein passender Market: {city}")
         return None
 
     edge = model - market
@@ -71,7 +74,7 @@ def analyze(city):
     return None
 
 # ---------------- MAIN ----------------
-send("🚀 REAL DATA BOT (B2 FIXED) gestartet")
+send("🚀 REAL DATA BOT (B2 FINAL) gestartet")
 
 while True:
     print("\n--- Neue Analyse ---")

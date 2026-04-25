@@ -15,7 +15,7 @@ API_KEY = os.getenv("OPENWEATHER_API_KEY")
 # ================================
 CITIES = ["London", "New York", "Hong Kong"]
 
-EDGE_THRESHOLD = 10   # realistischer
+EDGE_THRESHOLD = 10   # realistischer Einstieg
 MIN_MODEL = 45        # Mindestqualität
 
 # ================================
@@ -46,7 +46,7 @@ def get_weather(city):
         return None
 
 # ================================
-# 🧠 MODEL
+# 🧠 MODEL (REALISTISCH)
 # ================================
 def calculate_model(data):
     humidity = data["main"]["humidity"]
@@ -56,16 +56,24 @@ def calculate_model(data):
 
     score = 0
 
-    if humidity > 70:
-        score += 30
-    if clouds > 60:
-        score += 30
-    if wind > 5:
-        score += 10
-    if temp < 15:
+    # konservativer Aufbau
+    if humidity > 75:
+        score += 25
+    elif humidity > 60:
+        score += 15
+
+    if clouds > 70:
+        score += 25
+    elif clouds > 50:
+        score += 15
+
+    if wind > 6:
         score += 10
 
-    return min(score, 90)
+    if temp < 12:
+        score += 10
+
+    return min(score, 65)
 
 # ================================
 # 📊 MARKET (STABILER PROXY)
@@ -101,7 +109,7 @@ def is_value_bet(model, market):
 # 🔁 MAIN LOOP
 # ================================
 def run_bot():
-    send_telegram("🚀 REAL DATA BOT (STABLE MODE) gestartet")
+    send_telegram("🚀 REAL DATA BOT (FINAL STABLE MODE) gestartet")
     print("Bot läuft...")
 
     while True:

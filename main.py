@@ -9,61 +9,51 @@ WEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 EDGE_THRESHOLD = 10
 STAKE = 2
 
-CITIES = {
-    "New York": "precipitation-in-nyc-in-april",
-    "London": "precipitation-in-london-in-april",
-    "Hong Kong": "precipitation-in-hong-kong-in-april"
-}
+CITIES = ["New York", "London", "Hong Kong"]
 
 # ---------------- TELEGRAM ----------------
 def send(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
 
-# ---------------- WEATHER MODEL ----------------
+# ---------------- WEATHER ----------------
 def get_weather(city):
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
     r = requests.get(url).json()
 
-    rain = 0
+    rain = r.get("rain", {}).get("1h", 0)
     clouds = r["clouds"]["all"]
     humidity = r["main"]["humidity"]
 
-    if "rain" in r:
-        rain = r["rain"].get("1h", 0)
-
-    # simple model
     prob = (clouds * 0.4) + (humidity * 0.3) + (rain * 30)
-
     return min(prob, 100)
 
-# ---------------- POLYMARKET ----------------
-def get_market(slug):
+# ---------------- POLYMARKET SEARCH ----------------
+def find_market(city):
     try:
-        url = f"https://gamma-api.polymarket.com/markets?slug={slug}"
+        url = "https://gamma-api.polymarket.com/markets"
         r = requests.get(url).json()
 
-        if not r:
-            return None
+        for m in r:
+            title = m.get("question", "").lower()
 
-        market = r[0]
+            if city.lower() in title and "rain" in title:
+                yes_price = float(m["outcomePrices"][0])
+                return yes_price * 100
 
-        # outcome prices
-        yes_price = float(market["outcomePrices"][0])
-
-        # convert to %
-        return yes_price * 100
-
-    except:
         return None
 
-# ---------------- EDGE ----------------
-def analyze(city, slug):
+    except Exception as e:
+        print("Market Error:", e)
+        return None
+
+# ---------------- ANALYSE ----------------
+def analyze(city):
     model = get_weather(city)
-    market = get_market(slug)
+    market = find_market(city)
 
     if market is None:
-        print(f"❌ Kein Market: {city}")
+        print(f"❌ Kein Market gefunden: {city}")
         return None
 
     edge = model - market
@@ -80,14 +70,14 @@ def analyze(city, slug):
 
     return None
 
-# ---------------- MAIN LOOP ----------------
-send("🚀 REAL DATA BOT (B2) gestartet")
+# ---------------- MAIN ----------------
+send("🚀 REAL DATA BOT (B2 FIXED) gestartet")
 
 while True:
     print("\n--- Neue Analyse ---")
 
-    for city, slug in CITIES.items():
-        result = analyze(city, slug)
+    for city in CITIES:
+        result = analyze(city)
 
         if result:
             msg = f"""

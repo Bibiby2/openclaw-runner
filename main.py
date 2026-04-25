@@ -1,152 +1,106 @@
-import requests
-import time
 import os
-import random
+import time
+import requests
 
-# ================================
-# 🔑 ENV VARS
-# ================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-API_KEY = os.getenv("OPENWEATHER_API_KEY")
+WEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-# ================================
-# ⚙️ SETTINGS
-# ================================
-CITIES = ["London", "New York", "Hong Kong"]
+EDGE_THRESHOLD = 10
+STAKE = 2
 
-EDGE_THRESHOLD = 10   # realistischer Einstieg
-MIN_MODEL = 45        # Mindestqualität
+CITIES = {
+    "New York": "precipitation-in-nyc-in-april",
+    "London": "precipitation-in-london-in-april",
+    "Hong Kong": "precipitation-in-hong-kong-in-april"
+}
 
-# ================================
-# 📩 TELEGRAM
-# ================================
-def send_telegram(msg):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-    except:
-        print("Telegram Error")
+# ---------------- TELEGRAM ----------------
+def send(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
 
-# ================================
-# 🌦️ WEATHER
-# ================================
+# ---------------- WEATHER MODEL ----------------
 def get_weather(city):
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
-        res = requests.get(url).json()
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
+    r = requests.get(url).json()
 
-        if res.get("cod") != 200:
-            print(f"❌ API Problem für {city}")
+    rain = 0
+    clouds = r["clouds"]["all"]
+    humidity = r["main"]["humidity"]
+
+    if "rain" in r:
+        rain = r["rain"].get("1h", 0)
+
+    # simple model
+    prob = (clouds * 0.4) + (humidity * 0.3) + (rain * 30)
+
+    return min(prob, 100)
+
+# ---------------- POLYMARKET ----------------
+def get_market(slug):
+    try:
+        url = f"https://gamma-api.polymarket.com/markets?slug={slug}"
+        r = requests.get(url).json()
+
+        if not r:
             return None
 
-        return res
-    except Exception as e:
-        print("Weather Error:", e)
+        market = r[0]
+
+        # outcome prices
+        yes_price = float(market["outcomePrices"][0])
+
+        # convert to %
+        return yes_price * 100
+
+    except:
         return None
 
-# ================================
-# 🧠 MODEL (REALISTISCH)
-# ================================
-def calculate_model(data):
-    humidity = data["main"]["humidity"]
-    clouds = data["clouds"]["all"]
-    wind = data["wind"]["speed"]
-    temp = data["main"]["temp"]
+# ---------------- EDGE ----------------
+def analyze(city, slug):
+    model = get_weather(city)
+    market = get_market(slug)
 
-    score = 0
+    if market is None:
+        print(f"❌ Kein Market: {city}")
+        return None
 
-    # konservativer Aufbau
-    if humidity > 75:
-        score += 25
-    elif humidity > 60:
-        score += 15
-
-    if clouds > 70:
-        score += 25
-    elif clouds > 50:
-        score += 15
-
-    if wind > 6:
-        score += 10
-
-    if temp < 12:
-        score += 10
-
-    return min(score, 65)
-
-# ================================
-# 📊 MARKET (STABILER PROXY)
-# ================================
-def get_market_probability(city):
-    base_market = {
-        "London": 45,
-        "New York": 50,
-        "Hong Kong": 55
-    }
-
-    noise = random.uniform(-5, 5)
-    return round(base_market[city] + noise, 1)
-
-# ================================
-# 💎 VALUE CHECK
-# ================================
-def is_value_bet(model, market):
     edge = model - market
 
-    if model < MIN_MODEL:
-        return False, edge
+    print(f"{city}: Model {model:.1f}% | Market {market:.1f}% | Edge {edge:.1f}%")
 
-    if model < market:
-        return False, edge
+    if edge > EDGE_THRESHOLD:
+        return {
+            "city": city,
+            "model": model,
+            "market": market,
+            "edge": edge
+        }
 
-    if edge < EDGE_THRESHOLD:
-        return False, edge
+    return None
 
-    return True, edge
+# ---------------- MAIN LOOP ----------------
+send("🚀 REAL DATA BOT (B2) gestartet")
 
-# ================================
-# 🔁 MAIN LOOP
-# ================================
-def run_bot():
-    send_telegram("🚀 REAL DATA BOT (FINAL STABLE MODE) gestartet")
-    print("Bot läuft...")
+while True:
+    print("\n--- Neue Analyse ---")
 
-    while True:
-        print("\n--- Neue Analyse ---")
+    for city, slug in CITIES.items():
+        result = analyze(city, slug)
 
-        for city in CITIES:
-            try:
-                weather = get_weather(city)
-                if not weather:
-                    continue
+        if result:
+            msg = f"""
+💰 REAL TRADE
+📍 {result['city']}
 
-                model = calculate_model(weather)
-                market = get_market_probability(city)
+🧠 Model: {result['model']:.1f}%
+📊 Market: {result['market']:.1f}%
+📈 Edge: {result['edge']:.1f}%
 
-                valid, edge = is_value_bet(model, market)
+🎯 BUY YES
+💵 ${STAKE}
+"""
+            send(msg)
 
-                print(f"{city}: Model {model}% | Market {market}% | Edge {round(edge,1)}%")
-
-                if valid:
-                    send_telegram(
-                        f"💰 REAL EDGE\n"
-                        f"📍 {city}\n\n"
-                        f"🧠 Model: {model}%\n"
-                        f"📊 Market: {market}%\n"
-                        f"📈 Edge: {round(edge,1)}%\n\n"
-                        f"🎯 BUY YES"
-                    )
-                else:
-                    print(f"❌ Kein Value: {city}")
-
-            except Exception as e:
-                print("Error:", e)
-
-        time.sleep(120)
-
-# ================================
-# ▶️ START
-# ================================
-if __name__ == "__main__":
-    run_bot()
+    time.sleep(120)

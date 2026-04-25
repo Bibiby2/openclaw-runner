@@ -1,183 +1,114 @@
 import requests
 import time
 import os
-from datetime import datetime
 
-# ================================
-# 🔑 ENV VARS
-# ================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-WEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-# ================================
-# ⚙️ SETTINGS (BALANCED MODE)
-# ================================
-CITIES = ["London", "New York", "Hong Kong"]
+# ========================
+# SETTINGS
+# ========================
+CITIES = {
+    "London": "https://polymarket.com/event/precipitation-in-london-in-april",
+    "New York": "https://polymarket.com/event/precipitation-in-nyc-in-april",
+    "Hong Kong": "https://polymarket.com/event/precipitation-in-hong-kong-in-april"
+}
 
-EDGE_THRESHOLD = 10      # weniger strikt → mehr Trades
-MIN_MODEL = 45           # Mindestqualität
-MAX_TRADES_PER_RUN = 3
+EDGE_THRESHOLD = 10
 
-TRADE_AMOUNT = 2         # $ Paper Trade
-
-# ================================
-# 💰 PAPER TRADING
-# ================================
-balance = 100
-wins = 0
-losses = 0
-
-# ================================
-# 📩 TELEGRAM
-# ================================
+# ========================
+# TELEGRAM
+# ========================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-    except:
-        print("Telegram Error")
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
-# ================================
-# 🌦️ WEATHER DATA
-# ================================
+# ========================
+# WEATHER
+# ========================
 def get_weather(city):
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
-    try:
-        res = requests.get(url).json()
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
+    return requests.get(url).json()
 
-        if res.get("cod") != 200:
-            print(f"❌ API Problem für {city}: {res}")
-            return None
-
-        return {
-            "temp": res["main"]["temp"],
-            "humidity": res["main"]["humidity"],
-            "wind": res["wind"]["speed"],
-            "clouds": res["clouds"]["all"]
-        }
-    except Exception as e:
-        print("Weather Error:", e)
-        return None
-
-# ================================
-# 🧠 MODEL (IMPROVED)
-# ================================
+# ========================
+# MODEL
+# ========================
 def calculate_model(data):
+    humidity = data["main"]["humidity"]
+    clouds = data["clouds"]["all"]
+    wind = data["wind"]["speed"]
+
     score = 0
 
-    # 🌧️ Regen Wahrscheinlichkeit (simple proxy)
-    if data["humidity"] > 70:
+    if humidity > 70:
         score += 30
-    if data["clouds"] > 60:
+    if clouds > 60:
         score += 30
-    if data["wind"] > 5:
-        score += 10
-    if data["temp"] < 15:
-        score += 10
+    if wind > 5:
+        score += 20
 
-    return min(score, 100)
+    return min(score, 90)
 
-# ================================
-# 📊 MARKET (SIMULATED)
-# ================================
-def get_market_odds():
-    import random
-    return random.uniform(30, 80)
+# ========================
+# REAL MARKET (SCRAPE)
+# ========================
+def get_market_probability(url):
+    try:
+        html = requests.get(url).text
 
-# ================================
-# 💎 VALUE CHECK
-# ================================
-def is_value_bet(model, market):
-    edge = model - market
+        import re
+        match = re.search(r'(\d{1,2})\%', html)
 
-    if model < MIN_MODEL:
-        return False, edge
+        if match:
+            return float(match.group(1))
+        return None
 
-    if model < market:
-        return False, edge
+    except:
+        return None
 
-    if edge < EDGE_THRESHOLD:
-        return False, edge
-
-    return True, edge
-
-# ================================
-# 💰 PAPER TRADE
-# ================================
-def execute_trade(city, model, market, edge):
-    global balance, wins, losses
-
-    # 🎯 Entscheidung
-    action = "BUY YES"
-
-    # 📊 Ergebnis simulieren
-    import random
-    win = random.random() < (model / 100)
-
-    if win:
-        balance += TRADE_AMOUNT
-        wins += 1
-        result = "WIN ✅"
-    else:
-        balance -= TRADE_AMOUNT
-        losses += 1
-        result = "LOSS ❌"
-
-    # 📩 Telegram
-    msg = f"""
-💰 PAPER TRADE
-📍 {city}
-
-🧠 Model: {round(model,1)}%
-📊 Market: {round(market,1)}%
-📈 Edge: {round(edge,1)}%
-
-🎯 {action}
-💵 ${TRADE_AMOUNT}
-
-📊 RESULT: {result}
-💰 Balance: {round(balance,2)}$
-🏆 Wins: {wins} ❌ Losses: {losses}
-"""
-    send_telegram(msg)
-
-# ================================
-# 🔁 MAIN LOOP
-# ================================
-def run_bot():
-    print("🚀 VALUE BOT läuft...")
+# ========================
+# MAIN
+# ========================
+def run():
+    send_telegram("🚀 REAL DATA BOT gestartet")
 
     while True:
-        print("\n--- Neue Analyse ---")
+        print("\n--- Analyse ---")
 
-        trades_done = 0
+        for city, url in CITIES.items():
+            try:
+                weather = get_weather(city)
 
-        for city in CITIES:
-            if trades_done >= MAX_TRADES_PER_RUN:
-                break
+                if weather.get("cod") != 200:
+                    continue
 
-            data = get_weather(city)
-            if not data:
-                continue
+                model = calculate_model(weather)
+                market = get_market_probability(url)
 
-            model = calculate_model(data)
-            market = get_market_odds()
+                if market is None:
+                    print(f"❌ Kein Market: {city}")
+                    continue
 
-            valid, edge = is_value_bet(model, market)
+                edge = model - market
 
-            print(f"{city}: Model {model}% | Market {round(market,1)}% | Edge {round(edge,1)}%")
+                print(f"{city}: Model {model} | Market {market} | Edge {edge}")
 
-            if valid:
-                execute_trade(city, model, market, edge)
-                trades_done += 1
-            else:
-                print(f"❌ Kein Value: {city}")
+                if edge > EDGE_THRESHOLD:
+                    send_telegram(
+                        f"💰 REAL EDGE\n"
+                        f"{city}\n"
+                        f"Model: {model}%\n"
+                        f"Market: {market}%\n"
+                        f"Edge: {round(edge,2)}%\n"
+                        f"👉 BUY YES"
+                    )
+                else:
+                    print("❌ Kein Value")
 
-        time.sleep(60)
+            except Exception as e:
+                print("Error:", e)
 
-# ================================
-# ▶️ START
-# ================================
-if __name__ == "__main__":
-    run_bot()
+        time.sleep(120)
+
+run()

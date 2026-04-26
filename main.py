@@ -2,119 +2,87 @@ import os
 import time
 import requests
 
+# --- CONFIG ---
+VC_API_KEY = os.getenv("VISUAL_CROSSING_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-CITIES = ["New York", "London", "Hong Kong"]
+MIN_EDGE = 0.08
+SLEEP_TIME = 300  # 5 Minuten
 
-# STATE
-last_trade_time = {}
-blocked_cities = {}
+MARKETS = [
+    {"city": "New York", "lat": 40.71, "lon": -74.00, "token_id": "REPLACE_WITH_REAL"},
+    {"city": "London", "lat": 51.50, "lon": -0.12, "token_id": "REPLACE_WITH_REAL"},
+    {"city": "Hong Kong", "lat": 22.28, "lon": 114.15, "token_id": "REPLACE_WITH_REAL"},
+]
 
-# ⚙️ BALANCED SETTINGS
-COOLDOWN_SECONDS = 180  # 3 Minuten (vorher 5)
-EDGE_THRESHOLD = 8
-MIN_MODEL = 40
-
-def send(msg):
+# --- TELEGRAM ---
+def send_tg(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+    requests.post(url, json={
+        "chat_id": CHAT_ID,
+        "text": msg,
+        "parse_mode": "Markdown"
+    })
 
-def get_weather(city):
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
-    r = requests.get(url).json()
-    if r.get("cod") != 200:
+# --- WEATHER ---
+def get_weather(lat, lon):
+    try:
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/today?unitGroup=metric&elements=precipprob&key={VC_API_KEY}&contentType=json"
+        r = requests.get(url).json()
+        prob = r["days"][0]["precipprob"]
+        return prob / 100
+    except:
         return None
-    return r
 
-def rain_model(w):
-    rain = w.get("rain", {}).get("1h", 0)
-    clouds = w["clouds"]["all"]
-    humidity = w["main"]["humidity"]
+# --- MARKET ---
+def get_market_price(token_id):
+    try:
+        url = f"https://clob.polymarket.com/price?token_id={token_id}&side=BUY"
+        r = requests.get(url).json()
+        return float(r["price"])
+    except:
+        return None
 
-    score = 0
-
-    if rain > 0:
-        score += 50
-    if rain > 2:
-        score += 20
-    if clouds > 60:
-        score += 20
-    if humidity > 70:
-        score += 10
-
-    return min(score, 100)
-
-def market_score():
-    return 45 + (time.time() % 15)
-
-def can_trade(city):
-    now = time.time()
-
-    if city in last_trade_time:
-        if now - last_trade_time[city] < COOLDOWN_SECONDS:
-            return False, "Cooldown"
-
-    if city in blocked_cities:
-        return False, "Blocked"
-
-    return True, "OK"
-
+# --- MAIN LOGIC ---
 def run():
-    send("⚖️ BALANCED SAFE MODE gestartet")
+    send_tg("🚀 *REAL EDGE BOT STARTED*\nStrategy: Weather Arbitrage")
 
     while True:
-        print("\n--- Analyse ---")
+        print("\n--- New Cycle ---")
 
-        for city in CITIES:
-            allowed, reason = can_trade(city)
+        for m in MARKETS:
+            weather_prob = get_weather(m["lat"], m["lon"])
+            market_price = get_market_price(m["token_id"])
 
-            if not allowed:
-                print(f"⛔ {city}: {reason}")
+            if weather_prob is None or market_price is None:
+                print(f"❌ Data error: {m['city']}")
                 continue
 
-            w = get_weather(city)
+            edge = weather_prob - market_price
 
-            if not w:
-                print(f"❌ Kein Data: {city}")
-                continue
+            print(f"{m['city']} | Model: {weather_prob:.2f} | Market: {market_price:.2f} | Edge: {edge:.2f}")
 
-            model = rain_model(w)
-            market = market_score()
-            edge = model - market
+            if edge > MIN_EDGE:
+                msg = (
+                    f"🎯 *TRADE SIGNAL*\n\n"
+                    f"📍 {m['city']}\n"
+                    f"🧠 Model: {weather_prob*100:.1f}%\n"
+                    f"📊 Market: {market_price*100:.1f}%\n"
+                    f"💎 Edge: {edge*100:.1f}%\n\n"
+                    f"👉 BUY YES"
+                )
+                send_tg(msg)
 
-            print(f"{city}: Model {model} | Market {market} | Edge {edge}")
+                print("✅ TRADE SIGNAL SENT")
 
-            # FILTER
-            if model < MIN_MODEL:
-                print("⚠️ Model zu schwach")
-                continue
+                time.sleep(300)
 
-            if edge < EDGE_THRESHOLD:
-                print("⚠️ Edge zu klein")
-                continue
+            else:
+                print("⚠️ No trade")
 
-            if market > 70:
-                print("⚠️ Market zu hoch")
-                continue
+        time.sleep(SLEEP_TIME)
 
-            # TRADE
-            msg = f"""⚖️ BALANCED TRADE
-📍 {city}
-
-🧠 Model: {model:.1f}%
-📊 Market: {market:.1f}%
-📈 Edge: {edge:.1f}%
-
-🎯 BUY YES
-💵 $2
-"""
-            send(msg)
-
-            last_trade_time[city] = time.time()
-
-        time.sleep(60)
-
+# --- START ---
 if __name__ == "__main__":
     run()

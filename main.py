@@ -8,6 +8,15 @@ API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 CITIES = ["New York", "London", "Hong Kong"]
 
+# 🔒 STATE MEMORY
+last_trade_time = {}
+blocked_cities = {}
+
+# ⚙️ SETTINGS
+COOLDOWN_SECONDS = 300  # 5 Minuten
+EDGE_THRESHOLD = 12
+MIN_MODEL = 55
+
 def send(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
@@ -19,12 +28,10 @@ def get_weather(city):
         return None
     return r
 
-# 🌧️ REGEN MODELL
 def rain_model(w):
     rain = w.get("rain", {}).get("1h", 0)
     clouds = w["clouds"]["all"]
     humidity = w["main"]["humidity"]
-    wind = w["wind"]["speed"]
 
     score = 0
 
@@ -32,101 +39,82 @@ def rain_model(w):
         score += 50
     if rain > 2:
         score += 20
-
     if clouds > 60:
         score += 20
-    if clouds > 80:
-        score += 10
-
     if humidity > 70:
-        score += 15
-
-    if wind > 5:
         score += 10
 
     return min(score, 100)
 
-# ☀️ SONNE MODELL (NEU!)
-def sun_model(w):
-    clouds = w["clouds"]["all"]
-    humidity = w["main"]["humidity"]
-    temp = w["main"]["temp"]
-
-    score = 0
-
-    if clouds < 30:
-        score += 40
-    if clouds < 15:
-        score += 20
-
-    if humidity < 60:
-        score += 20
-
-    if temp > 20:
-        score += 20
-    if temp > 25:
-        score += 20
-
-    return min(score, 100)
-
-# 📊 MARKET SIMULATION (placeholder)
 def market_score():
-    return 40 + (time.time() % 20)  # einfache Simulation
+    return 40 + (time.time() % 20)
+
+def can_trade(city):
+    now = time.time()
+
+    # ⏱ Cooldown prüfen
+    if city in last_trade_time:
+        if now - last_trade_time[city] < COOLDOWN_SECONDS:
+            return False, "Cooldown aktiv"
+
+    # 🚫 Blocked nach Verlust
+    if city in blocked_cities:
+        return False, "City blockiert (Loss)"
+
+    return True, "OK"
 
 def run():
-    send("🚀 WEATHER BOT (RAIN + SUN MODE) gestartet")
+    send("🛡️ SAFE MODE BOT gestartet")
 
     while True:
         print("\n--- Neue Analyse ---")
 
         for city in CITIES:
+            allowed, reason = can_trade(city)
+
+            if not allowed:
+                print(f"⛔ {city}: {reason}")
+                continue
+
             w = get_weather(city)
 
             if not w:
                 print(f"❌ Kein Data: {city}")
                 continue
 
-            rain = rain_model(w)
-            sun = sun_model(w)
+            model = rain_model(w)
             market = market_score()
+            edge = model - market
 
-            print(f"{city}: Rain {rain} | Sun {sun} | Market {market}")
+            print(f"{city}: Model {model} | Market {market} | Edge {edge}")
 
-            # 🌧️ RAIN TRADE
-            edge_rain = rain - market
-
-            if rain > 55 and edge_rain > 10:
-                msg = f"""🌧️ RAIN EDGE
-📍 {city}
-
-🧠 Model: {rain:.1f}%
-📊 Market: {market:.1f}%
-📈 Edge: {edge_rain:.1f}%
-
-🎯 BUY YES (RAIN)
-💵 $2
-"""
-                send(msg)
+            # 🚫 FILTER
+            if model < MIN_MODEL:
+                print("⚠️ Model zu schwach")
                 continue
 
-            # ☀️ SUN TRADE
-            edge_sun = sun - market
-
-            if sun > 60 and edge_sun > 10:
-                msg = f"""☀️ SUN EDGE
-📍 {city}
-
-🧠 Model: {sun:.1f}%
-📊 Market: {market:.1f}%
-📈 Edge: {edge_sun:.1f}%
-
-🎯 BUY YES (SUN)
-💵 $2
-"""
-                send(msg)
+            if edge < EDGE_THRESHOLD:
+                print("⚠️ Edge zu klein")
                 continue
 
-            print("⚠️ Kein Trade")
+            if market > 65:
+                print("⚠️ Market zu hoch")
+                continue
+
+            # ✅ TRADE
+            msg = f"""🛡️ SAFE TRADE
+📍 {city}
+
+🧠 Model: {model:.1f}%
+📊 Market: {market:.1f}%
+📈 Edge: {edge:.1f}%
+
+🎯 BUY YES
+💵 $2
+"""
+            send(msg)
+
+            last_trade_time[city] = time.time()
 
         time.sleep(60)
 

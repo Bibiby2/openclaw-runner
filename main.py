@@ -11,16 +11,16 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 # ==============================
-# 🌍 SETTINGS (BALANCED MODE)
+# 🌍 SETTINGS (FLOW MODE)
 # ==============================
 CITIES = ["New York", "London", "Hong Kong"]
 
-MIN_EDGE = 15
-MIN_MODEL = 50
+MIN_EDGE = 10
+MIN_MODEL = 45
 MIN_MARKET = 30
 MAX_MARKET = 70
 
-TRADE_COOLDOWN_MINUTES = 20
+TRADE_COOLDOWN_MINUTES = 15
 
 BASE_BET = 2
 BOOST_BET = 3
@@ -66,7 +66,7 @@ def calculate_model(weather):
         score += 40
     if clouds > 50:
         score += 20
-    if humidity > 65:
+    if humidity > 60:
         score += 20
 
     return min(score, 100)
@@ -116,13 +116,18 @@ def process_city(city):
     if not can_trade(city):
         return False
 
-    # BET SIZE
-    bet = BOOST_BET if edge >= 30 else BASE_BET
+    # 💵 BET SIZE (leicht dynamisch)
+    if edge >= 25:
+        bet = 3
+    elif edge >= 15:
+        bet = 2
+    else:
+        bet = 1.5  # kleine Position bei schwächerem Edge
 
     last_trade_time[city] = datetime.now()
 
     msg = f"""
-💰 REAL EDGE (BALANCED)
+💰 REAL EDGE (FLOW MODE)
 📍 {city}
 
 🧠 Model: {model:.1f}%
@@ -140,7 +145,7 @@ def process_city(city):
 # 🔁 MAIN LOOP
 # ==============================
 def run_bot():
-    send_telegram("🚀 REAL DATA BOT (BALANCED MODE) gestartet")
+    send_telegram("🚀 REAL DATA BOT (FLOW MODE) gestartet")
 
     while True:
         print("\n--- Neue Analyse ---")

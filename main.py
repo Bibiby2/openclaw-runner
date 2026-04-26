@@ -8,14 +8,14 @@ API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 CITIES = ["New York", "London", "Hong Kong"]
 
-# 🔒 STATE MEMORY
+# STATE
 last_trade_time = {}
 blocked_cities = {}
 
-# ⚙️ SETTINGS
-COOLDOWN_SECONDS = 300  # 5 Minuten
-EDGE_THRESHOLD = 12
-MIN_MODEL = 55
+# ⚙️ BALANCED SETTINGS
+COOLDOWN_SECONDS = 180  # 3 Minuten (vorher 5)
+EDGE_THRESHOLD = 8
+MIN_MODEL = 40
 
 def send(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -47,27 +47,25 @@ def rain_model(w):
     return min(score, 100)
 
 def market_score():
-    return 40 + (time.time() % 20)
+    return 45 + (time.time() % 15)
 
 def can_trade(city):
     now = time.time()
 
-    # ⏱ Cooldown prüfen
     if city in last_trade_time:
         if now - last_trade_time[city] < COOLDOWN_SECONDS:
-            return False, "Cooldown aktiv"
+            return False, "Cooldown"
 
-    # 🚫 Blocked nach Verlust
     if city in blocked_cities:
-        return False, "City blockiert (Loss)"
+        return False, "Blocked"
 
     return True, "OK"
 
 def run():
-    send("🛡️ SAFE MODE BOT gestartet")
+    send("⚖️ BALANCED SAFE MODE gestartet")
 
     while True:
-        print("\n--- Neue Analyse ---")
+        print("\n--- Analyse ---")
 
         for city in CITIES:
             allowed, reason = can_trade(city)
@@ -88,7 +86,7 @@ def run():
 
             print(f"{city}: Model {model} | Market {market} | Edge {edge}")
 
-            # 🚫 FILTER
+            # FILTER
             if model < MIN_MODEL:
                 print("⚠️ Model zu schwach")
                 continue
@@ -97,12 +95,12 @@ def run():
                 print("⚠️ Edge zu klein")
                 continue
 
-            if market > 65:
+            if market > 70:
                 print("⚠️ Market zu hoch")
                 continue
 
-            # ✅ TRADE
-            msg = f"""🛡️ SAFE TRADE
+            # TRADE
+            msg = f"""⚖️ BALANCED TRADE
 📍 {city}
 
 🧠 Model: {model:.1f}%

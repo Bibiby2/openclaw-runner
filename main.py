@@ -1,168 +1,134 @@
-import requests
-import time
 import os
-from datetime import datetime, timedelta
+import time
+import requests
 
-# ==============================
-# 🔑 ENV VARIABLES
-# ==============================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-# ==============================
-# 🌍 SETTINGS (FLOW MODE)
-# ==============================
 CITIES = ["New York", "London", "Hong Kong"]
 
-MIN_EDGE = 10
-MIN_MODEL = 45
-MIN_MARKET = 30
-MAX_MARKET = 70
-
-TRADE_COOLDOWN_MINUTES = 15
-
-BASE_BET = 2
-BOOST_BET = 3
-
-last_trade_time = {}
-
-# ==============================
-# 📩 TELEGRAM
-# ==============================
-def send_telegram(msg):
+def send(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-    except:
-        print("Telegram Fehler")
+    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
 
-# ==============================
-# 🌦️ WEATHER DATA
-# ==============================
 def get_weather(city):
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
-    try:
-        res = requests.get(url).json()
-        if res.get("cod") != 200:
-            print(f"❌ API Problem: {city}", res)
-            return None
-        return res
-    except:
-        print(f"⚠️ Request Fehler: {city}")
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
+    r = requests.get(url).json()
+    if r.get("cod") != 200:
         return None
+    return r
 
-# ==============================
-# 🧠 MODEL
-# ==============================
-def calculate_model(weather):
-    rain = weather.get("rain", {}).get("1h", 0)
-    clouds = weather["clouds"]["all"]
-    humidity = weather["main"]["humidity"]
+# 🌧️ REGEN MODELL
+def rain_model(w):
+    rain = w.get("rain", {}).get("1h", 0)
+    clouds = w["clouds"]["all"]
+    humidity = w["main"]["humidity"]
+    wind = w["wind"]["speed"]
 
     score = 0
 
     if rain > 0:
-        score += 40
-    if clouds > 50:
+        score += 50
+    if rain > 2:
         score += 20
-    if humidity > 60:
+
+    if clouds > 60:
+        score += 20
+    if clouds > 80:
+        score += 10
+
+    if humidity > 70:
+        score += 15
+
+    if wind > 5:
+        score += 10
+
+    return min(score, 100)
+
+# ☀️ SONNE MODELL (NEU!)
+def sun_model(w):
+    clouds = w["clouds"]["all"]
+    humidity = w["main"]["humidity"]
+    temp = w["main"]["temp"]
+
+    score = 0
+
+    if clouds < 30:
+        score += 40
+    if clouds < 15:
+        score += 20
+
+    if humidity < 60:
+        score += 20
+
+    if temp > 20:
+        score += 20
+    if temp > 25:
         score += 20
 
     return min(score, 100)
 
-# ==============================
-# 📊 MARKET SIMULATION
-# ==============================
-def get_market_prob():
-    import random
-    return random.uniform(30, 70)
+# 📊 MARKET SIMULATION (placeholder)
+def market_score():
+    return 40 + (time.time() % 20)  # einfache Simulation
 
-# ==============================
-# 📈 EDGE
-# ==============================
-def calculate_edge(model, market):
-    return model - market
-
-# ==============================
-# ⏱️ COOLDOWN
-# ==============================
-def can_trade(city):
-    if city not in last_trade_time:
-        return True
-    return datetime.now() - last_trade_time[city] > timedelta(minutes=TRADE_COOLDOWN_MINUTES)
-
-# ==============================
-# 💰 TRADE ENGINE
-# ==============================
-def process_city(city):
-    weather = get_weather(city)
-    if not weather:
-        return False
-
-    model = calculate_model(weather)
-    market = get_market_prob()
-    edge = calculate_edge(model, market)
-
-    print(f"{city}: Model {model:.1f} | Market {market:.1f} | Edge {edge:.1f}")
-
-    # FILTERS
-    if model < MIN_MODEL:
-        return False
-    if market < MIN_MARKET or market > MAX_MARKET:
-        return False
-    if edge < MIN_EDGE:
-        return False
-    if not can_trade(city):
-        return False
-
-    # 💵 BET SIZE (leicht dynamisch)
-    if edge >= 25:
-        bet = 3
-    elif edge >= 15:
-        bet = 2
-    else:
-        bet = 1.5  # kleine Position bei schwächerem Edge
-
-    last_trade_time[city] = datetime.now()
-
-    msg = f"""
-💰 REAL EDGE (FLOW MODE)
-📍 {city}
-
-🧠 Model: {model:.1f}%
-📊 Market: {market:.1f}%
-📈 Edge: {edge:.1f}%
-
-🎯 BUY YES
-💵 ${bet}
-"""
-    send_telegram(msg)
-
-    return True
-
-# ==============================
-# 🔁 MAIN LOOP
-# ==============================
-def run_bot():
-    send_telegram("🚀 REAL DATA BOT (FLOW MODE) gestartet")
+def run():
+    send("🚀 WEATHER BOT (RAIN + SUN MODE) gestartet")
 
     while True:
         print("\n--- Neue Analyse ---")
 
-        trade_found = False
-
         for city in CITIES:
-            if process_city(city):
-                trade_found = True
+            w = get_weather(city)
 
-        if not trade_found:
-            print("⚠️ Kein Trade gefunden")
+            if not w:
+                print(f"❌ Kein Data: {city}")
+                continue
+
+            rain = rain_model(w)
+            sun = sun_model(w)
+            market = market_score()
+
+            print(f"{city}: Rain {rain} | Sun {sun} | Market {market}")
+
+            # 🌧️ RAIN TRADE
+            edge_rain = rain - market
+
+            if rain > 55 and edge_rain > 10:
+                msg = f"""🌧️ RAIN EDGE
+📍 {city}
+
+🧠 Model: {rain:.1f}%
+📊 Market: {market:.1f}%
+📈 Edge: {edge_rain:.1f}%
+
+🎯 BUY YES (RAIN)
+💵 $2
+"""
+                send(msg)
+                continue
+
+            # ☀️ SUN TRADE
+            edge_sun = sun - market
+
+            if sun > 60 and edge_sun > 10:
+                msg = f"""☀️ SUN EDGE
+📍 {city}
+
+🧠 Model: {sun:.1f}%
+📊 Market: {market:.1f}%
+📈 Edge: {edge_sun:.1f}%
+
+🎯 BUY YES (SUN)
+💵 $2
+"""
+                send(msg)
+                continue
+
+            print("⚠️ Kein Trade")
 
         time.sleep(60)
 
-# ==============================
-# ▶️ START
-# ==============================
 if __name__ == "__main__":
-    run_bot()
+    run()

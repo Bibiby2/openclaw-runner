@@ -11,16 +11,16 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 # ==============================
-# 🌍 SETTINGS
+# 🌍 SETTINGS (BALANCED MODE)
 # ==============================
 CITIES = ["New York", "London", "Hong Kong"]
 
-MIN_EDGE = 20
-MIN_MODEL = 55
-MIN_MARKET = 35
-MAX_MARKET = 65
+MIN_EDGE = 15
+MIN_MODEL = 50
+MIN_MARKET = 30
+MAX_MARKET = 70
 
-TRADE_COOLDOWN_MINUTES = 30
+TRADE_COOLDOWN_MINUTES = 20
 
 BASE_BET = 2
 BOOST_BET = 3
@@ -32,7 +32,10 @@ last_trade_time = {}
 # ==============================
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+    try:
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
+    except:
+        print("Telegram Fehler")
 
 # ==============================
 # 🌦️ WEATHER DATA
@@ -46,10 +49,11 @@ def get_weather(city):
             return None
         return res
     except:
+        print(f"⚠️ Request Fehler: {city}")
         return None
 
 # ==============================
-# 🧠 MODEL (SIMPLE LOGIC)
+# 🧠 MODEL
 # ==============================
 def calculate_model(weather):
     rain = weather.get("rain", {}).get("1h", 0)
@@ -60,43 +64,41 @@ def calculate_model(weather):
 
     if rain > 0:
         score += 40
-    if clouds > 60:
+    if clouds > 50:
         score += 20
-    if humidity > 70:
+    if humidity > 65:
         score += 20
 
     return min(score, 100)
 
 # ==============================
-# 📊 FAKE MARKET (SIMULATION)
+# 📊 MARKET SIMULATION
 # ==============================
 def get_market_prob():
     import random
     return random.uniform(30, 70)
 
 # ==============================
-# 📈 EDGE CALC
+# 📈 EDGE
 # ==============================
 def calculate_edge(model, market):
     return model - market
 
 # ==============================
-# ⏱️ COOLDOWN CHECK
+# ⏱️ COOLDOWN
 # ==============================
 def can_trade(city):
     if city not in last_trade_time:
         return True
-
     return datetime.now() - last_trade_time[city] > timedelta(minutes=TRADE_COOLDOWN_MINUTES)
 
 # ==============================
-# 💰 TRADE DECISION
+# 💰 TRADE ENGINE
 # ==============================
 def process_city(city):
     weather = get_weather(city)
     if not weather:
-        print(f"⚠️ Keine Daten: {city}")
-        return
+        return False
 
     model = calculate_model(weather)
     market = get_market_prob()
@@ -104,23 +106,23 @@ def process_city(city):
 
     print(f"{city}: Model {model:.1f} | Market {market:.1f} | Edge {edge:.1f}")
 
-    # 🔒 FILTERS
+    # FILTERS
     if model < MIN_MODEL:
-        return
+        return False
     if market < MIN_MARKET or market > MAX_MARKET:
-        return
+        return False
     if edge < MIN_EDGE:
-        return
+        return False
     if not can_trade(city):
-        return
+        return False
 
-    # 💵 BET SIZE
+    # BET SIZE
     bet = BOOST_BET if edge >= 30 else BASE_BET
 
     last_trade_time[city] = datetime.now()
 
     msg = f"""
-💰 REAL EDGE
+💰 REAL EDGE (BALANCED)
 📍 {city}
 
 🧠 Model: {model:.1f}%
@@ -132,11 +134,13 @@ def process_city(city):
 """
     send_telegram(msg)
 
+    return True
+
 # ==============================
 # 🔁 MAIN LOOP
 # ==============================
 def run_bot():
-    send_telegram("🚀 REAL DATA BOT (FINAL OPTIMIZED) gestartet")
+    send_telegram("🚀 REAL DATA BOT (BALANCED MODE) gestartet")
 
     while True:
         print("\n--- Neue Analyse ---")
@@ -144,11 +148,7 @@ def run_bot():
         trade_found = False
 
         for city in CITIES:
-            before = len(last_trade_time)
-            process_city(city)
-            after = len(last_trade_time)
-
-            if after > before:
+            if process_city(city):
                 trade_found = True
 
         if not trade_found:

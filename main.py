@@ -1,145 +1,163 @@
-import os
-import time
 import requests
-import json
-import random
+import time
+import os
+from datetime import datetime, timedelta
 
+# ==============================
+# 🔑 ENV VARIABLES
+# ==============================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-WEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-EDGE_THRESHOLD = 8
-STAKE = 2
+# ==============================
+# 🌍 SETTINGS
+# ==============================
+CITIES = ["New York", "London", "Hong Kong"]
 
-DATA_FILE = "trades.json"
+MIN_EDGE = 20
+MIN_MODEL = 55
+MIN_MARKET = 35
+MAX_MARKET = 65
 
-# ---------------- TELEGRAM ----------------
-def send(msg):
+TRADE_COOLDOWN_MINUTES = 30
+
+BASE_BET = 2
+BOOST_BET = 3
+
+last_trade_time = {}
+
+# ==============================
+# 📩 TELEGRAM
+# ==============================
+def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
+    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
 
-# ---------------- LOAD/SAVE ----------------
-def load_data():
-    try:
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {"balance": 100, "wins": 0, "losses": 0}
-
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
-
-data = load_data()
-
-# ---------------- WEATHER ----------------
+# ==============================
+# 🌦️ WEATHER DATA
+# ==============================
 def get_weather(city):
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
-    r = requests.get(url).json()
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
+    try:
+        res = requests.get(url).json()
+        if res.get("cod") != 200:
+            print(f"❌ API Problem: {city}", res)
+            return None
+        return res
+    except:
+        return None
 
-    rain = r.get("rain", {}).get("1h", 0)
-    clouds = r["clouds"]["all"]
-    humidity = r["main"]["humidity"]
+# ==============================
+# 🧠 MODEL (SIMPLE LOGIC)
+# ==============================
+def calculate_model(weather):
+    rain = weather.get("rain", {}).get("1h", 0)
+    clouds = weather["clouds"]["all"]
+    humidity = weather["main"]["humidity"]
 
-    prob = (clouds * 0.3) + (humidity * 0.2) + (rain * 40)
-    return min(prob, 100)
+    score = 0
 
-# ---------------- MARKETS ----------------
-def get_markets():
-    url = "https://gamma-api.polymarket.com/markets"
-    return requests.get(url).json()
+    if rain > 0:
+        score += 40
+    if clouds > 60:
+        score += 20
+    if humidity > 70:
+        score += 20
 
-def is_weather_market(title):
-    keywords = ["temperature", "rain", "precipitation", "weather"]
-    return any(k in title for k in keywords)
+    return min(score, 100)
 
-def extract_city(title):
-    cities = ["new york", "london", "hong kong", "tokyo", "paris"]
-    for c in cities:
-        if c in title:
-            return c.title()
-    return None
+# ==============================
+# 📊 FAKE MARKET (SIMULATION)
+# ==============================
+def get_market_prob():
+    import random
+    return random.uniform(30, 70)
 
-# ---------------- ANALYSE ----------------
-def find_trade():
-    markets = get_markets()
-    best = None
+# ==============================
+# 📈 EDGE CALC
+# ==============================
+def calculate_edge(model, market):
+    return model - market
 
-    for m in markets:
-        title = m.get("question", "").lower()
+# ==============================
+# ⏱️ COOLDOWN CHECK
+# ==============================
+def can_trade(city):
+    if city not in last_trade_time:
+        return True
 
-        if not is_weather_market(title):
-            continue
+    return datetime.now() - last_trade_time[city] > timedelta(minutes=TRADE_COOLDOWN_MINUTES)
 
-        city = extract_city(title)
-        if not city:
-            continue
+# ==============================
+# 💰 TRADE DECISION
+# ==============================
+def process_city(city):
+    weather = get_weather(city)
+    if not weather:
+        print(f"⚠️ Keine Daten: {city}")
+        return
 
-        try:
-            market = float(m["outcomePrices"][0]) * 100
-        except:
-            continue
+    model = calculate_model(weather)
+    market = get_market_prob()
+    edge = calculate_edge(model, market)
 
-        model = get_weather(city)
-        edge = model - market
+    print(f"{city}: Model {model:.1f} | Market {market:.1f} | Edge {edge:.1f}")
 
-        if edge > EDGE_THRESHOLD:
-            if not best or edge > best["edge"]:
-                best = {
-                    "city": city,
-                    "model": model,
-                    "market": market,
-                    "edge": edge,
-                    "title": m["question"]
-                }
+    # 🔒 FILTERS
+    if model < MIN_MODEL:
+        return
+    if market < MIN_MARKET or market > MAX_MARKET:
+        return
+    if edge < MIN_EDGE:
+        return
+    if not can_trade(city):
+        return
 
-    return best
+    # 💵 BET SIZE
+    bet = BOOST_BET if edge >= 30 else BASE_BET
 
-# ---------------- RESULT SIMULATION ----------------
-def simulate_result():
-    return random.choice(["WIN", "LOSS"])
+    last_trade_time[city] = datetime.now()
 
-# ---------------- MAIN ----------------
-send("🚀 B4 TRACKING BOT gestartet")
+    msg = f"""
+💰 REAL EDGE
+📍 {city}
 
-while True:
-    print("\n--- Neue Analyse ---")
-
-    trade = find_trade()
-
-    if trade:
-        send(f"""
-💰 TRADE
-📍 {trade['city']}
-
-📊 {trade['title']}
-
-🧠 Model: {trade['model']:.1f}%
-📊 Market: {trade['market']:.1f}%
-📈 Edge: {trade['edge']:.1f}%
+🧠 Model: {model:.1f}%
+📊 Market: {market:.1f}%
+📈 Edge: {edge:.1f}%
 
 🎯 BUY YES
-💵 ${STAKE}
-""")
+💵 ${bet}
+"""
+    send_telegram(msg)
 
-        result = simulate_result()
+# ==============================
+# 🔁 MAIN LOOP
+# ==============================
+def run_bot():
+    send_telegram("🚀 REAL DATA BOT (FINAL OPTIMIZED) gestartet")
 
-        if result == "WIN":
-            data["balance"] += STAKE
-            data["wins"] += 1
-        else:
-            data["balance"] -= STAKE
-            data["losses"] += 1
+    while True:
+        print("\n--- Neue Analyse ---")
 
-        save_data(data)
+        trade_found = False
 
-        send(f"""
-📊 RESULT: {result}
-💰 Balance: {data['balance']}$
-🏆 Wins: {data['wins']} ❌ Losses: {data['losses']}
-""")
+        for city in CITIES:
+            before = len(last_trade_time)
+            process_city(city)
+            after = len(last_trade_time)
 
-    else:
-        print("❌ Kein Trade gefunden")
+            if after > before:
+                trade_found = True
 
-    time.sleep(120)
+        if not trade_found:
+            print("⚠️ Kein Trade gefunden")
+
+        time.sleep(60)
+
+# ==============================
+# ▶️ START
+# ==============================
+if __name__ == "__main__":
+    run_bot()

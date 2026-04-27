@@ -16,7 +16,7 @@ KELLY_FRACTION = 0.1
 TARGET_HOUR = 12
 SLEEP_TIME = 180
 
-DRY_RUN = True  # ⚠️ später False
+DRY_RUN = True
 
 # =========================
 # TELEGRAM
@@ -39,31 +39,53 @@ def get_weather(lat, lon):
     try:
         url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/today?unitGroup=metric&elements=precipprob&key={VC_KEY}&contentType=json"
         r = requests.get(url, timeout=10).json()
-        return r["days"][0]["hours"][TARGET_HOUR]["precipprob"] / 100
+
+        hours = r["days"][0]["hours"]
+
+        # Safety: falls Stunde nicht existiert
+        if TARGET_HOUR >= len(hours):
+            return None
+
+        prob = hours[TARGET_HOUR]["precipprob"] / 100
+        return prob
+
     except Exception as e:
         print("❌ Weather error:", e)
         return None
 
 # =========================
-# FIND TOKEN ID (GAMMA API)
+# FIND TOKEN (ROBUST)
 # =========================
-def find_weather_token_id(city):
+def find_weather_token(city):
     try:
         url = f"https://gamma-api.polymarket.com/markets?active=true&closed=false&q={city}%20rain"
         r = requests.get(url, timeout=10).json()
 
-        today = datetime.utcnow().strftime("%B").lower()
+        today_str = datetime.utcnow().strftime("%Y-%m-%d")
 
         for m in r:
             question = m.get("question", "").lower()
+            end_date = m.get("endDate", "")
+            volume = m.get("volume", 0)
 
-            if "rain" in question and city.lower() in question:
-                # optional: Datum-Check verbessern später
-                token_ids = m.get("clobTokenIds", [])
+            # 🔥 FILTERS
+            if city.lower() not in question:
+                continue
+            if "rain" not in question:
+                continue
+            if today_str not in end_date:
+                continue
+            if volume < 1000:  # 🚨 LIQUIDITY FILTER
+                continue
 
-                if token_ids:
-                    print(f"✅ Found market: {m['question']}")
-                    return token_ids[0]
+            token_ids = m.get("clobTokenIds", [])
+
+            # YES/NO CHECK
+            if len(token_ids) < 2:
+                continue
+
+            print(f"✅ Found market: {m['question']}")
+            return token_ids[0]  # YES
 
         return None
 
@@ -72,7 +94,7 @@ def find_weather_token_id(city):
         return None
 
 # =========================
-# MARKET PRICE (CLOB)
+# MARKET PRICE
 # =========================
 def get_market_price(token_id):
     try:
@@ -84,7 +106,7 @@ def get_market_price(token_id):
         return None
 
 # =========================
-# KELLY
+# KELLY (SAFE)
 # =========================
 def kelly(prob, price, bankroll):
     if prob <= price:
@@ -106,7 +128,7 @@ def kelly(prob, price, bankroll):
 # =========================
 def execute_trade(city, price, size, prob, edge):
     if DRY_RUN:
-        print(f"🧪 DRY TRADE {city} ${size}")
+        print(f"🧪 DRY TRADE → {city} ${size}")
         send_tg(
             f"🧪 *DRY TRADE*\n\n"
             f"📍 {city}\n"
@@ -116,13 +138,13 @@ def execute_trade(city, price, size, prob, edge):
             f"💎 Edge: {edge*100:.1f}%"
         )
     else:
-        send_tg("⚠️ REAL TRADE EXECUTION NOT IMPLEMENTED YET")
+        send_tg("⚠️ REAL EXECUTION NOT ENABLED YET")
 
 # =========================
 # MAIN LOOP
 # =========================
 def run():
-    send_tg("🚀 *DYNAMIC WEATHER BOT STARTED*\nMode: Execution Ready")
+    send_tg("🚀 *FINAL EXECUTION BOT STARTED*\nMode: DRY RUN SAFE")
 
     cities = [
         {"name": "New York", "lat": 40.71, "lon": -74.00},
@@ -134,11 +156,11 @@ def run():
 
         for c in cities:
             try:
-                # 1. FIND MARKET
-                token_id = find_weather_token_id(c["name"])
+                # 1. MARKET FIND
+                token_id = find_weather_token(c["name"])
 
                 if not token_id:
-                    print(f"⚠️ No market for {c['name']}")
+                    print(f"⚠️ No valid market for {c['name']}")
                     continue
 
                 # 2. WEATHER
@@ -162,7 +184,6 @@ def run():
 
                 # 5. POSITION SIZE
                 size = kelly(prob, price, BANKROLL)
-
                 if size <= 0:
                     continue
 

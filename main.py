@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+from datetime import datetime
 
 # =========================
 # CONFIG
@@ -9,14 +10,13 @@ VC_KEY = os.getenv("VISUAL_CROSSING_KEY")
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# 👉 Execution Settings
 BANKROLL = 100
 MIN_EDGE = 0.10
 KELLY_FRACTION = 0.1
 TARGET_HOUR = 12
 SLEEP_TIME = 180
 
-DRY_RUN = True  # ⚠️ VERY IMPORTANT (noch kein echtes Geld)
+DRY_RUN = True  # ⚠️ später False
 
 # =========================
 # TELEGRAM
@@ -33,7 +33,7 @@ def send_tg(msg):
         print("Telegram error")
 
 # =========================
-# WEATHER
+# WEATHER (HOURLY)
 # =========================
 def get_weather(lat, lon):
     try:
@@ -45,7 +45,34 @@ def get_weather(lat, lon):
         return None
 
 # =========================
-# POLYMARKET PRICE (REAL)
+# FIND TOKEN ID (GAMMA API)
+# =========================
+def find_weather_token_id(city):
+    try:
+        url = f"https://gamma-api.polymarket.com/markets?active=true&closed=false&q={city}%20rain"
+        r = requests.get(url, timeout=10).json()
+
+        today = datetime.utcnow().strftime("%B").lower()
+
+        for m in r:
+            question = m.get("question", "").lower()
+
+            if "rain" in question and city.lower() in question:
+                # optional: Datum-Check verbessern später
+                token_ids = m.get("clobTokenIds", [])
+
+                if token_ids:
+                    print(f"✅ Found market: {m['question']}")
+                    return token_ids[0]
+
+        return None
+
+    except Exception as e:
+        print("❌ Gamma error:", e)
+        return None
+
+# =========================
+# MARKET PRICE (CLOB)
 # =========================
 def get_market_price(token_id):
     try:
@@ -72,15 +99,14 @@ def kelly(prob, price, bankroll):
     safe_f = f * KELLY_FRACTION
     bet = safe_f * bankroll
 
-    # Safety Cap
     return round(min(bet, bankroll * 0.10), 2)
 
 # =========================
-# EXECUTION (SAFE)
+# EXECUTION
 # =========================
 def execute_trade(city, price, size, prob, edge):
     if DRY_RUN:
-        print(f"🧪 DRY RUN → BUY YES {city} | ${size}")
+        print(f"🧪 DRY TRADE {city} ${size}")
         send_tg(
             f"🧪 *DRY TRADE*\n\n"
             f"📍 {city}\n"
@@ -90,55 +116,60 @@ def execute_trade(city, price, size, prob, edge):
             f"💎 Edge: {edge*100:.1f}%"
         )
     else:
-        # 🚨 HIER kommt später echte Order rein
-        send_tg("⚠️ REAL TRADE WOULD EXECUTE HERE")
+        send_tg("⚠️ REAL TRADE EXECUTION NOT IMPLEMENTED YET")
 
 # =========================
 # MAIN LOOP
 # =========================
 def run():
-    send_tg("🚀 *EXECUTION BOT STARTED*\nMode: DRY RUN")
+    send_tg("🚀 *DYNAMIC WEATHER BOT STARTED*\nMode: Execution Ready")
 
-    markets = [
-        {
-            "city": "New York",
-            "lat": 40.71,
-            "lon": -74.00,
-            "token_id": "REPLACE_WITH_REAL"
-        },
+    cities = [
+        {"name": "New York", "lat": 40.71, "lon": -74.00},
+        {"name": "London", "lat": 51.50, "lon": -0.12},
     ]
 
     while True:
         print("\n--- NEW CYCLE ---")
 
-        for m in markets:
+        for c in cities:
             try:
-                prob = get_weather(m["lat"], m["lon"])
+                # 1. FIND MARKET
+                token_id = find_weather_token_id(c["name"])
+
+                if not token_id:
+                    print(f"⚠️ No market for {c['name']}")
+                    continue
+
+                # 2. WEATHER
+                prob = get_weather(c["lat"], c["lon"])
                 if prob is None:
                     continue
 
-                price = get_market_price(m["token_id"])
+                # 3. MARKET PRICE
+                price = get_market_price(token_id)
                 if price is None:
-                    print("⚠️ No market price")
                     continue
 
                 edge = prob - price
 
-                print(f"{m['city']} | Model: {prob:.2f} | Market: {price:.2f} | Edge: {edge:.2f}")
+                print(f"{c['name']} | Model: {prob:.2f} | Market: {price:.2f} | Edge: {edge:.2f}")
 
+                # 4. EDGE FILTER
                 if edge < MIN_EDGE:
                     print("⚠️ No trade")
                     continue
 
+                # 5. POSITION SIZE
                 size = kelly(prob, price, BANKROLL)
 
                 if size <= 0:
-                    print("⚠️ Kelly = 0")
                     continue
 
-                execute_trade(m["city"], price, size, prob, edge)
+                # 6. EXECUTE
+                execute_trade(c["name"], price, size, prob, edge)
 
-                time.sleep(180)
+                time.sleep(120)
 
             except Exception as e:
                 print("❌ Loop error:", e)
